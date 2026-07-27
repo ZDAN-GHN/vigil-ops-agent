@@ -78,6 +78,9 @@ dmypy.json
 # Ruff
 .ruff_cache/
 
+# qoder
+.qoderignore
+
 # Claude Code
 .claude/
 
