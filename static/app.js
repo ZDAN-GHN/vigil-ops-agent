@@ -1,5 +1,5 @@
-// SuperBizAgent 前端应用
-class SuperBizAgentApp {
+// OnCallAgent 前端应用
+class OnCallAgentApp {
     constructor() {
         this.apiBaseUrl = 'http://localhost:9999/api';
         this.currentMode = 'quick'; // 'quick' 或 'stream'
@@ -8,8 +8,11 @@ class SuperBizAgentApp {
         this.currentChatHistory = []; // 当前对话的消息历史
         this.chatHistories = this.loadChatHistories(); // 所有历史对话
         this.isCurrentChatFromHistory = false; // 标记当前对话是否是从历史记录加载的
-        
+
         this.initializeElements();
+        this.initTheme();
+        this.initParticles();
+        this.initTypewriter();
         this.bindEvents();
         this.updateUI();
         this.initMarkdown();
@@ -98,7 +101,11 @@ class SuperBizAgentApp {
         this.sidebar = document.querySelector('.sidebar');
         this.newChatBtn = document.getElementById('newChatBtn');
         this.aiOpsSidebarBtn = document.getElementById('aiOpsSidebarBtn');
-        
+        this.mobileMenuBtn = document.getElementById('mobileMenuBtn');
+        this.sidebarOverlay = document.getElementById('sidebarOverlay');
+        this.themeToggleBtn = document.getElementById('themeToggleBtn');
+        this.themeText = document.getElementById('themeText');
+
         // 输入区域元素
         this.messageInput = document.getElementById('messageInput');
         this.sendButton = document.getElementById('sendButton');
@@ -109,16 +116,197 @@ class SuperBizAgentApp {
         this.modeDropdown = document.getElementById('modeDropdown');
         this.currentModeText = document.getElementById('currentModeText');
         this.fileInput = document.getElementById('fileInput');
-        
+
         // 聊天区域元素
         this.chatMessages = document.getElementById('chatMessages');
         this.loadingOverlay = document.getElementById('loadingOverlay');
         this.chatContainer = document.querySelector('.chat-container');
         this.welcomeGreeting = document.getElementById('welcomeGreeting');
         this.chatHistoryList = document.getElementById('chatHistoryList');
-        
+
+        // 快捷建议卡片
+        this.suggestionCards = document.querySelectorAll('.suggestion-card');
+
         // 初始化时检查是否需要居中
         this.checkAndSetCentered();
+    }
+
+    // 初始化主题
+    initTheme() {
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme) {
+            document.documentElement.setAttribute('data-theme', savedTheme);
+        }
+        this.updateThemeUI();
+        this.updateWelcomeLogo();
+    }
+
+    // 切换主题
+    toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('theme', next);
+        this.updateThemeUI();
+        this.updateWelcomeLogo();
+    }
+
+    // 根据当前主题更新欢迎页 Logo
+    updateWelcomeLogo() {
+        const logoEl = document.getElementById('welcomeLogo');
+        if (!logoEl) return;
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const svgSrc = isDark
+            ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="100" height="100"><defs><radialGradient id="ec" cx="45%" cy="40%" r="50%"><stop offset="0%" stop-color="#FFFFFF"/><stop offset="15%" stop-color="#F5B8FF"/><stop offset="35%" stop-color="#c770db"/><stop offset="60%" stop-color="#0a84ff"/><stop offset="85%" stop-color="#0055b8"/><stop offset="100%" stop-color="#003d82"/></radialGradient><radialGradient id="eg" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#f093fb" stop-opacity="0.6"/><stop offset="30%" stop-color="#c770db" stop-opacity="0.35"/><stop offset="60%" stop-color="#5ac8fa" stop-opacity="0.15"/><stop offset="100%" stop-color="#0a84ff" stop-opacity="0"/></radialGradient><radialGradient id="er" cx="50%" cy="50%" r="50%"><stop offset="70%" stop-color="#c770db" stop-opacity="0"/><stop offset="85%" stop-color="#f093fb" stop-opacity="0.4"/><stop offset="100%" stop-color="#0a84ff" stop-opacity="0"/></radialGradient><linearGradient id="rg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f093fb"/><stop offset="40%" stop-color="#c770db"/><stop offset="100%" stop-color="#0a84ff"/></linearGradient><linearGradient id="rg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f093fb"/><stop offset="50%" stop-color="#5c3a82"/><stop offset="100%" stop-color="#3a8ad4"/></linearGradient><linearGradient id="rg3" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#00c4cc"/><stop offset="50%" stop-color="#c770db"/><stop offset="100%" stop-color="#f093fb"/></linearGradient><linearGradient id="pl" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#f093fb" stop-opacity="0.2"/><stop offset="30%" stop-color="#c770db" stop-opacity="0.75"/><stop offset="50%" stop-color="#0a84ff" stop-opacity="0.95"/><stop offset="70%" stop-color="#c770db" stop-opacity="0.75"/><stop offset="100%" stop-color="#f093fb" stop-opacity="0.2"/></linearGradient><filter id="gl"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter><filter id="sg"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter><filter id="es"><feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#c770db" flood-opacity="0.5"/></filter></defs><circle cx="40" cy="40" r="36" fill="none" stroke="url(#rg2)" stroke-width="2" opacity="0.15"><animate attributeName="r" values="23;37" dur="4s" repeatCount="indefinite" begin="1s"/><animate attributeName="opacity" values="0.3;0" dur="4s" repeatCount="indefinite" begin="1s"/></circle><circle cx="40" cy="40" r="29" fill="none" stroke="url(#rg3)" stroke-width="3" opacity="0.25"><animate attributeName="r" values="18;31" dur="3.2s" repeatCount="indefinite" begin="0.5s"/><animate attributeName="opacity" values="0.45;0" dur="3.2s" repeatCount="indefinite" begin="0.5s"/></circle><circle cx="40" cy="40" r="22" fill="none" stroke="url(#rg1)" stroke-width="4" opacity="0.35"><animate attributeName="r" values="13;25" dur="2.6s" repeatCount="indefinite" begin="0s"/><animate attributeName="opacity" values="0.6;0" dur="2.6s" repeatCount="indefinite" begin="0s"/></circle><path d="M 11,40 L 33,40 L 37,32 L 41,56 L 45,36 L 49,52 L 53,40 L 89,40" fill="none" stroke="url(#pl)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#sg)"><animate attributeName="opacity" values="0.3;0.75;0.3" dur="2.6s" repeatCount="indefinite"/></path><circle cx="40" cy="40" r="18" fill="url(#eg)"><animate attributeName="r" values="16;19;16" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="40" cy="40" r="14" fill="url(#er)"><animate attributeName="r" values="13;15;13" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="40" cy="40" r="11" fill="url(#ec)" filter="url(#es)"><animate attributeName="r" values="10;11.5;10" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="40" cy="40" r="7" fill="none" stroke="#FFFFFF" stroke-width="0.8" opacity="0.2"><animate attributeName="opacity" values="0.1;0.25;0.1" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="40" cy="40" r="4" fill="#1a0525" opacity="0.8"><animate attributeName="r" values="3.5;4.5;3.5" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="40" cy="40" r="2" fill="#c770db" opacity="0.4"><animate attributeName="opacity" values="0.2;0.5;0.2" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="36.5" cy="36.5" r="3" fill="#FFFFFF" opacity="0.75"><animate attributeName="opacity" values="0.5;0.9;0.5" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="43" cy="43.5" r="1.25" fill="#FFFFFF" opacity="0.4"><animate attributeName="opacity" values="0.2;0.5;0.2" dur="2.8s" repeatCount="indefinite" begin="0.4s"/></circle></svg>'
+            : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="100" height="100"><defs><radialGradient id="ec" cx="45%" cy="40%" r="50%"><stop offset="0%" stop-color="#FFFFFF"/><stop offset="15%" stop-color="#F5B8FF"/><stop offset="35%" stop-color="#c770db"/><stop offset="60%" stop-color="#0071e3"/><stop offset="85%" stop-color="#005bb5"/><stop offset="100%" stop-color="#004080"/></radialGradient><radialGradient id="eg" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#f093fb" stop-opacity="0.55"/><stop offset="30%" stop-color="#c770db" stop-opacity="0.3"/><stop offset="60%" stop-color="#4facfe" stop-opacity="0.12"/><stop offset="100%" stop-color="#0071e3" stop-opacity="0"/></radialGradient><radialGradient id="er" cx="50%" cy="50%" r="50%"><stop offset="70%" stop-color="#c770db" stop-opacity="0"/><stop offset="85%" stop-color="#f093fb" stop-opacity="0.35"/><stop offset="100%" stop-color="#0071e3" stop-opacity="0"/></radialGradient><linearGradient id="rg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f093fb"/><stop offset="40%" stop-color="#c770db"/><stop offset="100%" stop-color="#0071e3"/></linearGradient><linearGradient id="rg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f093fb"/><stop offset="50%" stop-color="#764ba2"/><stop offset="100%" stop-color="#4facfe"/></linearGradient><linearGradient id="rg3" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#00f2fe"/><stop offset="50%" stop-color="#f093fb"/><stop offset="100%" stop-color="#667eea"/></linearGradient><linearGradient id="pl" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#f093fb" stop-opacity="0.2"/><stop offset="30%" stop-color="#c770db" stop-opacity="0.7"/><stop offset="50%" stop-color="#0071e3" stop-opacity="0.9"/><stop offset="70%" stop-color="#c770db" stop-opacity="0.7"/><stop offset="100%" stop-color="#f093fb" stop-opacity="0.2"/></linearGradient><filter id="gl"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter><filter id="sg"><feGaussianBlur stdDeviation="1.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter><filter id="es"><feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#c770db" flood-opacity="0.35"/></filter></defs><circle cx="40" cy="40" r="36" fill="none" stroke="url(#rg2)" stroke-width="2" opacity="0.18"><animate attributeName="r" values="23;37" dur="4s" repeatCount="indefinite" begin="1s"/><animate attributeName="opacity" values="0.35;0" dur="4s" repeatCount="indefinite" begin="1s"/></circle><circle cx="40" cy="40" r="29" fill="none" stroke="url(#rg3)" stroke-width="3" opacity="0.28"><animate attributeName="r" values="18;31" dur="3.2s" repeatCount="indefinite" begin="0.5s"/><animate attributeName="opacity" values="0.5;0" dur="3.2s" repeatCount="indefinite" begin="0.5s"/></circle><circle cx="40" cy="40" r="22" fill="none" stroke="url(#rg1)" stroke-width="4" opacity="0.38"><animate attributeName="r" values="13;25" dur="2.6s" repeatCount="indefinite" begin="0s"/><animate attributeName="opacity" values="0.65;0" dur="2.6s" repeatCount="indefinite" begin="0s"/></circle><path d="M 11,40 L 33,40 L 37,32 L 41,56 L 45,36 L 49,52 L 53,40 L 89,40" fill="none" stroke="url(#pl)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#sg)"><animate attributeName="opacity" values="0.3;0.75;0.3" dur="2.6s" repeatCount="indefinite"/></path><circle cx="40" cy="40" r="18" fill="url(#eg)"><animate attributeName="r" values="16;19;16" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="40" cy="40" r="14" fill="url(#er)"><animate attributeName="r" values="13;15;13" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="40" cy="40" r="11" fill="url(#ec)" filter="url(#es)"><animate attributeName="r" values="10;11.5;10" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="40" cy="40" r="7" fill="none" stroke="#FFFFFF" stroke-width="0.8" opacity="0.22"><animate attributeName="opacity" values="0.12;0.28;0.12" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="40" cy="40" r="4" fill="#1a0525" opacity="0.75"><animate attributeName="r" values="3.5;4.5;3.5" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="40" cy="40" r="2" fill="#c770db" opacity="0.35"><animate attributeName="opacity" values="0.15;0.45;0.15" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="36.5" cy="36.5" r="3" fill="#FFFFFF" opacity="0.8"><animate attributeName="opacity" values="0.55;0.95;0.55" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="43" cy="43.5" r="1.25" fill="#FFFFFF" opacity="0.45"><animate attributeName="opacity" values="0.25;0.55;0.25" dur="2.8s" repeatCount="indefinite" begin="0.4s"/></circle></svg>';
+        logoEl.innerHTML = svgSrc;
+    }
+
+    // 更新主题切换按钮 UI
+    updateThemeUI() {
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+            (!document.documentElement.getAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+        if (this.themeText) {
+            this.themeText.textContent = isDark ? '浅色模式' : '深色模式';
+        }
+
+        const lightIcon = document.querySelector('.theme-icon-light');
+        const darkIcon = document.querySelector('.theme-icon-dark');
+        if (lightIcon && darkIcon) {
+            lightIcon.style.display = isDark ? 'none' : 'block';
+            darkIcon.style.display = isDark ? 'block' : 'none';
+        }
+
+        // 更新 theme-color meta
+        const metaTheme = document.querySelector('meta[name="theme-color"]');
+        if (metaTheme) {
+            metaTheme.setAttribute('content', isDark ? '#0d0d0d' : '#1a1a2e');
+        }
+    }
+
+    // 初始化 Canvas 粒子系统
+    initParticles() {
+        const canvas = document.createElement('canvas');
+        canvas.id = 'particleCanvas';
+        document.body.insertBefore(canvas, document.body.firstChild);
+
+        this.particleCanvas = canvas;
+        this.particleCtx = canvas.getContext('2d');
+        this.particles = [];
+        this.connectionDistance = 120;
+
+        this.resizeCanvas();
+        window.addEventListener('resize', () => this.resizeCanvas());
+
+        // 创建粒子
+        const particleCount = 60;
+        for (let i = 0; i < particleCount; i++) {
+            this.particles.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                vx: (Math.random() - 0.5) * 0.5,
+                vy: (Math.random() - 0.5) * 0.5,
+                radius: Math.random() * 2 + 1,
+                opacity: Math.random() * 0.5 + 0.2
+            });
+        }
+
+        this.animateParticles();
+    }
+
+    resizeCanvas() {
+        if (this.particleCanvas) {
+            this.particleCanvas.width = window.innerWidth;
+            this.particleCanvas.height = window.innerHeight;
+        }
+    }
+
+    animateParticles() {
+        if (!this.particleCtx || !this.particleCanvas) return;
+
+        const ctx = this.particleCtx;
+        const width = this.particleCanvas.width;
+        const height = this.particleCanvas.height;
+
+        ctx.clearRect(0, 0, width, height);
+
+        // 获取当前主题颜色
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+            (!document.documentElement.getAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        const particleColor = isDark ? '255, 255, 255' : '0, 113, 227';
+
+        // 更新和绘制粒子
+        this.particles.forEach((particle, i) => {
+            // 更新位置
+            particle.x += particle.vx;
+            particle.y += particle.vy;
+
+            // 边界反弹
+            if (particle.x < 0 || particle.x > width) particle.vx *= -1;
+            if (particle.y < 0 || particle.y > height) particle.vy *= -1;
+
+            // 绘制粒子
+            ctx.beginPath();
+            ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(${particleColor}, ${particle.opacity})`;
+            ctx.fill();
+
+            // 绘制连接线
+            for (let j = i + 1; j < this.particles.length; j++) {
+                const other = this.particles[j];
+                const dx = particle.x - other.x;
+                const dy = particle.y - other.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < this.connectionDistance) {
+                    const opacity = (1 - distance / this.connectionDistance) * 0.15;
+                    ctx.beginPath();
+                    ctx.moveTo(particle.x, particle.y);
+                    ctx.lineTo(other.x, other.y);
+                    ctx.strokeStyle = `rgba(${particleColor}, ${opacity})`;
+                    ctx.lineWidth = 0.5;
+                    ctx.stroke();
+                }
+            }
+        });
+
+        requestAnimationFrame(() => this.animateParticles());
+    }
+
+    // 初始化打字机效果
+    initTypewriter() {
+        this.typewriterTexts = [
+            { element: 'welcomeTitle', text: '你好，我是智能 OnCall 小助手', speed: 80, delay: 500 },
+            { element: 'welcomeSubtitle', text: '有什么可以帮你的？', speed: 60, delay: 200 }
+        ];
+
+        this.startTypewriter();
+    }
+
+    startTypewriter() {
+        this.typewriterTexts.forEach((item, index) => {
+            const element = document.getElementById(item.element);
+            if (!element) return;
+
+            setTimeout(() => {
+                this.typeText(element, item.text, item.speed);
+            }, item.delay * (index + 1));
+        });
+    }
+
+    typeText(element, text, speed) {
+        let i = 0;
+        element.textContent = '';
+
+        const timer = setInterval(() => {
+            if (i < text.length) {
+                element.textContent += text.charAt(i);
+                i++;
+            } else {
+                clearInterval(timer);
+            }
+        }, speed);
     }
 
     // 绑定事件监听器
@@ -127,12 +315,42 @@ class SuperBizAgentApp {
         if (this.newChatBtn) {
             this.newChatBtn.addEventListener('click', () => this.newChat());
         }
-        
+
         // AI Ops按钮
         if (this.aiOpsSidebarBtn) {
             this.aiOpsSidebarBtn.addEventListener('click', () => this.triggerAIOps());
         }
-        
+
+        // 主题切换
+        if (this.themeToggleBtn) {
+            this.themeToggleBtn.addEventListener('click', () => this.toggleTheme());
+        }
+
+        // 移动端菜单
+        if (this.mobileMenuBtn) {
+            this.mobileMenuBtn.addEventListener('click', () => this.toggleMobileSidebar());
+        }
+        if (this.sidebarOverlay) {
+            this.sidebarOverlay.addEventListener('click', () => this.closeMobileSidebar());
+        }
+
+        // 快捷建议卡片
+        this.suggestionCards.forEach(card => {
+            card.addEventListener('click', () => {
+                const suggestion = card.getAttribute('data-suggestion');
+                if (suggestion && this.messageInput) {
+                    this.messageInput.value = suggestion;
+                    this.messageInput.focus();
+                }
+            });
+            card.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    card.click();
+                }
+            });
+        });
+
         // 模式选择下拉菜单
         if (this.modeSelectorBtn) {
             this.modeSelectorBtn.addEventListener('click', (e) => {
@@ -140,7 +358,7 @@ class SuperBizAgentApp {
                 this.toggleModeDropdown();
             });
         }
-        
+
         // 下拉菜单项点击
         const dropdownItems = document.querySelectorAll('.dropdown-item');
         dropdownItems.forEach(item => {
@@ -149,21 +367,27 @@ class SuperBizAgentApp {
                 this.selectMode(mode);
                 this.closeModeDropdown();
             });
+            item.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    item.click();
+                }
+            });
         });
-        
+
         // 点击外部关闭下拉菜单
         document.addEventListener('click', (e) => {
-            if (!this.modeSelectorBtn.contains(e.target) && 
+            if (!this.modeSelectorBtn.contains(e.target) &&
                 !this.modeDropdown.contains(e.target)) {
                 this.closeModeDropdown();
             }
         });
-        
+
         // 发送消息
         if (this.sendButton) {
             this.sendButton.addEventListener('click', () => this.sendMessage());
         }
-        
+
         if (this.messageInput) {
             this.messageInput.addEventListener('keypress', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -172,7 +396,7 @@ class SuperBizAgentApp {
                 }
             });
         }
-        
+
         // 工具按钮和菜单
         if (this.toolsBtn) {
             this.toolsBtn.addEventListener('click', (e) => {
@@ -180,7 +404,7 @@ class SuperBizAgentApp {
                 this.toggleToolsMenu();
             });
         }
-        
+
         // 工具菜单项点击事件
         if (this.uploadFileItem) {
             this.uploadFileItem.addEventListener('click', () => {
@@ -189,19 +413,45 @@ class SuperBizAgentApp {
                 }
                 this.closeToolsMenu();
             });
+            this.uploadFileItem.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    this.uploadFileItem.click();
+                }
+            });
         }
-        
+
         // 点击外部关闭工具菜单
         document.addEventListener('click', (e) => {
-            if (this.toolsBtn && this.toolsMenu && 
-                !this.toolsBtn.contains(e.target) && 
+            if (this.toolsBtn && this.toolsMenu &&
+                !this.toolsBtn.contains(e.target) &&
                 !this.toolsMenu.contains(e.target)) {
                 this.closeToolsMenu();
             }
         });
-        
+
         if (this.fileInput) {
             this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+        }
+    }
+
+    // 切换移动端侧边栏
+    toggleMobileSidebar() {
+        if (this.sidebar) {
+            this.sidebar.classList.toggle('open');
+        }
+        if (this.sidebarOverlay) {
+            this.sidebarOverlay.classList.toggle('active');
+        }
+    }
+
+    // 关闭移动端侧边栏
+    closeMobileSidebar() {
+        if (this.sidebar) {
+            this.sidebar.classList.remove('open');
+        }
+        if (this.sidebarOverlay) {
+            this.sidebarOverlay.classList.remove('active');
         }
     }
 
@@ -231,7 +481,7 @@ class SuperBizAgentApp {
             this.showNotification('请等待当前对话完成后再新建对话', 'warning');
             return;
         }
-        
+
         // 如果当前有对话内容，且不是从历史记录加载的，才保存为新的历史对话
         // 如果是从历史记录加载的，只需要更新该历史记录
         if (this.currentChatHistory.length > 0) {
@@ -243,43 +493,41 @@ class SuperBizAgentApp {
                 this.saveCurrentChat();
             }
         }
-        
+
         // 停止所有进行中的操作
         this.isStreaming = false;
-        
+
         // 清空输入框
         if (this.messageInput) {
             this.messageInput.value = '';
         }
-        
+
         // 清空当前对话历史
         this.currentChatHistory = [];
-        
+
         // 重置标记
         this.isCurrentChatFromHistory = false;
-        
+
         // 清空聊天记录
         if (this.chatMessages) {
             this.chatMessages.innerHTML = '';
         }
-        
+
         // 生成新的会话ID
         this.sessionId = this.generateSessionId();
-        
+
         // 重置模式为快速
         this.currentMode = 'quick';
         this.updateUI();
-        
+
         // 重新设置居中样式（确保对话框居中显示）
         this.checkAndSetCentered();
-        
-        // 确保容器有过渡动画
-        if (this.chatContainer) {
-            this.chatContainer.style.transition = 'all 0.5s ease';
-        }
-        
+
         // 更新历史对话列表
         this.renderChatHistory();
+
+        // 关闭移动端侧边栏
+        this.closeMobileSidebar();
     }
     
     // 保存当前对话到历史记录（新建）
@@ -378,43 +626,49 @@ class SuperBizAgentApp {
         if (!this.chatHistoryList) {
             return;
         }
-        
+
         this.chatHistoryList.innerHTML = '';
-        
+
         if (this.chatHistories.length === 0) {
             return;
         }
-        
+
         this.chatHistories.forEach((history, index) => {
             const historyItem = document.createElement('div');
             historyItem.className = 'history-item';
             historyItem.dataset.historyId = history.id;
-            
+            historyItem.setAttribute('role', 'listitem');
+
+            if (history.id === this.sessionId) {
+                historyItem.classList.add('active');
+            }
+
             historyItem.innerHTML = `
                 <div class="history-item-content">
                     <span class="history-item-title">${this.escapeHtml(history.title)}</span>
                 </div>
-                <button class="history-item-delete" data-history-id="${history.id}" title="删除">
-                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <button class="history-item-delete" data-history-id="${history.id}" title="删除" aria-label="删除对话：${this.escapeHtml(history.title)}">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                         <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                     </svg>
                 </button>
             `;
-            
+
             // 点击历史项加载对话
             historyItem.addEventListener('click', (e) => {
                 if (!e.target.closest('.history-item-delete')) {
                     this.loadChatHistory(history.id);
+                    this.closeMobileSidebar();
                 }
             });
-            
+
             // 删除历史对话
             const deleteBtn = historyItem.querySelector('.history-item-delete');
             deleteBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.deleteChatHistory(history.id);
             });
-            
+
             this.chatHistoryList.appendChild(historyItem);
         });
     }
@@ -898,9 +1152,10 @@ class SuperBizAgentApp {
         if (type === 'assistant') {
             const messageAvatar = document.createElement('div');
             messageAvatar.className = 'message-avatar';
+            messageAvatar.setAttribute('aria-hidden', 'true');
             messageAvatar.innerHTML = `
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="white"/>
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="currentColor"/>
                 </svg>
             `;
             messageDiv.appendChild(messageAvatar);
@@ -928,14 +1183,12 @@ class SuperBizAgentApp {
 
         if (this.chatMessages) {
             this.chatMessages.appendChild(messageDiv);
-            
-            // 如果是第一条消息，移除居中样式并添加动画
+
+            // 如果是第一条消息，移除居中样式
             if (isFirstMessage && this.chatContainer) {
                 this.chatContainer.classList.remove('centered');
-                // 添加动画类
-                this.chatContainer.style.transition = 'all 0.5s ease';
             }
-            
+
             this.scrollToBottom();
         }
 
@@ -950,9 +1203,10 @@ class SuperBizAgentApp {
         // 添加头像图标
         const messageAvatar = document.createElement('div');
         messageAvatar.className = 'message-avatar';
+        messageAvatar.setAttribute('aria-hidden', 'true');
         messageAvatar.innerHTML = `
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="white"/>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="currentColor"/>
             </svg>
         `;
         messageDiv.appendChild(messageAvatar);
@@ -985,14 +1239,13 @@ class SuperBizAgentApp {
 
         if (this.chatMessages) {
             this.chatMessages.appendChild(messageDiv);
-            
+
             // 如果是第一条消息，移除居中样式
             const isFirstMessage = this.chatMessages.querySelectorAll('.message').length === 1;
             if (isFirstMessage && this.chatContainer) {
                 this.chatContainer.classList.remove('centered');
-                this.chatContainer.style.transition = 'all 0.5s ease';
             }
-            
+
             this.scrollToBottom();
         }
 
@@ -1050,25 +1303,14 @@ class SuperBizAgentApp {
         const notification = document.createElement('div');
         notification.className = `notification ${type}`;
         notification.textContent = message;
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 15px 20px;
-            border-radius: 8px;
-            color: white;
-            font-weight: 500;
-            z-index: 10000;
-            animation: slideIn 0.3s ease;
-            max-width: 300px;
-        `;
+        notification.setAttribute('role', 'alert');
 
-        // 根据类型设置颜色（Google Material Design配色）
+        // 根据类型设置颜色
         const colors = {
-            info: '#1a73e8',
-            success: '#34a853',
-            warning: '#fbbc04',
-            error: '#ea4335'
+            info: '#0071e3',
+            success: '#22c55e',
+            warning: '#f59e0b',
+            error: '#ef4444'
         };
         notification.style.backgroundColor = colors[type] || colors.info;
 
@@ -1077,7 +1319,7 @@ class SuperBizAgentApp {
 
         // 3秒后自动移除
         setTimeout(() => {
-            notification.style.animation = 'slideOut 0.3s ease';
+            notification.style.animation = 'notification-slide-out 250ms cubic-bezier(0.4, 0, 0.2, 1)';
             setTimeout(() => {
                 if (notification.parentNode) {
                     notification.parentNode.removeChild(notification);
@@ -1511,9 +1753,10 @@ class SuperBizAgentApp {
         // 添加头像图标
         const messageAvatar = document.createElement('div');
         messageAvatar.className = 'message-avatar';
+        messageAvatar.setAttribute('aria-hidden', 'true');
         messageAvatar.innerHTML = `
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="white"/>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="currentColor"/>
             </svg>
         `;
         messageDiv.appendChild(messageAvatar);
@@ -1658,34 +1901,7 @@ class SuperBizAgentApp {
     }
 }
 
-// 添加CSS动画
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-        to {
-            transform: translateX(0);
-            opacity: 1;
-        }
-    }
-    
-    @keyframes slideOut {
-        from {
-            transform: translateX(0);
-            opacity: 1;
-        }
-        to {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-    }
-`;
-document.head.appendChild(style);
-
 // 初始化应用
 document.addEventListener('DOMContentLoaded', () => {
-    new SuperBizAgentApp();
+    new OnCallAgentApp();
 });

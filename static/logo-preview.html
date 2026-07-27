@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OnCall Logo 预览 — AI Pulse 智能脉冲</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; display: flex; min-height: 100vh; }
+  
+  .light-panel, .dark-panel {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 48px 24px; position: relative;
+  }
+  .light-panel { background: #F8FAFC; }
+  .dark-panel { background: #0a0a0f; }
+  
+  .label {
+    position: absolute; top: 24px; left: 24px;
+    font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 20px;
+  }
+  .light-panel .label { background: #E2E8F0; color: #475569; }
+  .dark-panel .label { background: #1E293B; color: #94A3B8; }
+  
+  .logo-wrap {
+    display: flex; flex-direction: column; align-items: center; gap: 40px;
+  }
+  .logo-full { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .logo-icon-only { display: flex; align-items: center; gap: 28px; }
+  
+  .light-panel .logo-icon-only img { filter: drop-shadow(0 2px 10px rgba(199,112,219,0.15)); }
+  .dark-panel .logo-icon-only img { filter: drop-shadow(0 2px 14px rgba(240,147,251,0.25)); }
+  
+  .size-label { font-size: 11px; color: #94A3B8; text-align: center; margin-top: 6px; }
+  .dark-panel .size-label { color: #64748B; }
+  
+  .divider {
+    width: 1px; position: absolute; top: 0; bottom: 0; left: 50%;
+    background: linear-gradient(to bottom, transparent, rgba(148,163,184,0.3), transparent);
+  }
+  
+  .design-info {
+    position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: #94A3B8; text-align: center; white-space: nowrap;
+  }
+  .dark-panel .design-info { color: #475569; }
+</style>
+</head>
+<body>
+
+<div class="light-panel">
+  <div class="label">浅色主题</div>
+  <div class="logo-wrap">
+    <!-- 完整 Logo -->
+    <div class="logo-full">
+      <img src="logo-light.svg" alt="OnCall Logo 浅色" width="220" height="220">
+    </div>
+    <!-- 不同尺寸图标 -->
+    <div class="logo-icon-only">
+      <div>
+        <img src="logo-icon.svg" alt="OnCall Icon 64px" width="64" height="64">
+        <div class="size-label">64 × 64</div>
+      </div>
+      <div>
+        <img src="logo-icon.svg" alt="OnCall Icon 48px" width="48" height="48">
+        <div class="size-label">48 × 48</div>
+      </div>
+      <div>
+        <img src="logo-icon.svg" alt="OnCall Icon 32px" width="32" height="32">
+        <div class="size-label">32 × 32</div>
+      </div>
+      <div>
+        <img src="logo-icon.svg" alt="OnCall Icon 16px" width="16" height="16">
+        <div class="size-label">16 × 16</div>
+      </div>
+    </div>
+  </div>
+  <div class="design-info">AI Pulse 智能脉冲 · 粉红→紫→蓝渐变 · SVG 原生动画</div>
+</div>
+
+<div class="divider"></div>
+
+<div class="dark-panel">
+  <div class="label">深色主题</div>
+  <div class="logo-wrap">
+    <!-- 完整 Logo -->
+    <div class="logo-full">
+      <img src="logo-dark.svg" alt="OnCall Logo 深色" width="220" height="220">
+    </div>
+    <!-- 不同尺寸图标 -->
+    <div class="logo-icon-only">
+      <div>
+        <img src="logo-icon.svg" alt="OnCall Icon 64px" width="64" height="64">
+        <div class="size-label">64 × 64</div>
+      </div>
+      <div>
+        <img src="logo-icon.svg" alt="OnCall Icon 48px" width="48" height="48">
+        <div class="size-label">48 × 48</div>
+      </div>
+      <div>
+        <img src="logo-icon.svg" alt="OnCall Icon 32px" width="32" height="32">
+        <div class="size-label">32 × 32</div>
+      </div>
+      <div>
+        <img src="logo-icon.svg" alt="OnCall Icon 16px" width="16" height="16">
+        <div class="size-label">16 × 16</div>
+      </div>
+    </div>
+  </div>
+  <div class="design-info">AI Pulse 智能脉冲 · 粉红→紫→蓝渐变 · SVG 原生动画</div>
+</div>
+
+</body>
+</html>

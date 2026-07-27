@@ -3,29 +3,33 @@
 使用 Pydantic Settings 实现类型安全的配置管理
 """
 
+from pathlib import Path
 from typing import Dict, Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 项目根目录（config.py 在 app/ 下，所以向上取一级）
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
     """应用配置"""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(BASE_DIR / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
 
     # 应用配置
-    app_name: str = "SuperBizAgent"
+    app_name: str = "OnCallAgent"
     app_version: str = "1.0.0"
     debug: bool = False
     host: str = "0.0.0.0"
     port: int = 9999
 
     # DashScope 配置
-    dashscope_api_key: str = "sk-8771a11e027c4b1f900ceeb090fe898f"  # 默认空字符串，实际使用需从环境变量加载
+    dashscope_api_key: str = ""  # 默认空字符串，实际使用需从环境变量加载
     dashscope_model: str = "qwen-max"
     dashscope_embedding_model: str = "text-embedding-v4"  # v4 支持多种维度（默认 1024）
 

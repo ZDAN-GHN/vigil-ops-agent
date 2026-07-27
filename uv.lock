@@ -3095,7 +3095,7 @@ wheels = [
 ]
 
 [[package]]
-name = "super-biz-agent-py"
+name = "on-call-agent"
 version = "1.2.1"
 source = { editable = "." }
 dependencies = [
