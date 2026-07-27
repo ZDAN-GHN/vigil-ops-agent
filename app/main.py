@@ -14,6 +14,7 @@ from app.config import config
 from loguru import logger
 from app.api import chat, health, file, aiops
 from app.core.milvus_client import milvus_manager
+from app.services.scheduler_service import scheduled_aiops_service
 
 
 @asynccontextmanager
@@ -31,11 +32,16 @@ async def lifespan(app: FastAPI):
     milvus_manager.connect()
     logger.info("✅ Milvus 连接成功")
 
+    # 启动定时 AIOps 任务
+    if config.enable_scheduled_aiops:
+        await scheduled_aiops_service.start()
+
     logger.info("=" * 60)
 
     yield
 
     # 关闭时执行
+    await scheduled_aiops_service.stop()
     logger.info("🔌 正在关闭 Milvus 连接...")
     milvus_manager.close()
     logger.info(f"👋 {config.app_name} 关闭")

@@ -5,7 +5,7 @@
 
 import sys
 from loguru import logger
-from app.config import config
+from app.config import config, BASE_DIR
 
 
 def setup_logger():
@@ -30,8 +30,12 @@ def setup_logger():
     )
 
     # 添加文件输出（按天轮转，自动压缩）
+    # 使用绝对路径，确保无论从哪个目录启动，日志都写入项目根目录
+    # 路径格式: logs/logger/{yyyy-MM-dd}/app_{yyyy-MM-dd}.log
+    log_dir = BASE_DIR / "logs" / "logger"
+    log_dir.mkdir(parents=True, exist_ok=True)
     logger.add(
-        "logs/app_{time:YYYY-MM-DD}.log",
+        str(log_dir /  "app_{time:YYYY-MM-DD}.log"),
         rotation="00:00",  # 每天0点自动切割新日志文件
         retention="7 days",  # 仅保留最近7天的日志
         compression="zip",  # 过期日志自动压缩为zip

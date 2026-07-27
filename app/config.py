@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     mcp_monitor_transport: str = "streamable-http"
     mcp_monitor_url: str = "http://localhost:8004/mcp"
 
+    # 定时 AIOps 配置
+    enable_scheduled_aiops: bool = False
+    scheduled_aiops_interval_seconds: int = 300
+    scheduled_aiops_webhook_url: str = ""
+    scheduled_aiops_session_id: str = "_scheduled_aiops"
+
     @property
     def mcp_servers(self) -> Dict[str, Dict[str, Any]]:
         """获取完整的 MCP 服务器配置"""
