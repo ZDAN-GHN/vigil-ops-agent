@@ -34,7 +34,7 @@ def retrieve_knowledge(query: str) -> Tuple[str, List[Document]]:
         logger.info(f"知识检索工具被调用: query='{query[:50]}...'")
 
         # 调用 vector_search_service 进行检索（内部处理粗排 + 精排）
-        docs = vector_search_service.search(query, top_k=config.rag_top_k)
+        docs = vector_search_service.search(query)
 
         if not docs:
             logger.warning("未检索到相关文档")

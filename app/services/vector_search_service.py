@@ -12,8 +12,8 @@ from typing import List
 from langchain_core.documents import Document
 from loguru import logger
 
-from app.config import config
 from app.services.vector_store_manager import vector_store_manager
+
 
 class VectorSearchService:
     """
@@ -30,23 +30,27 @@ class VectorSearchService:
         logger.info("向量检索服务初始化完成")
 
     def search(
-        self,
-        query: str,
-        top_k: int = 3,
+            self,
+            query: str,
+            top_k: int = 5,
+            rerank: bool = True,
+            candidate_count: int = 50
     ) -> List[Document]:
         """
         搜索相似文档（两阶段检索：粗排 + Rerank 精排）
 
-        当 config.rerank_enabled=True 时：
+        当 rerank=True 时：
         1. 粗排：用 embedding 从 Milvus 召回 rerank_candidate_count 条候选
         2. 精排：用 DashScope Rerank API 重新打分，取 top_k 条
 
-        当 config.rerank_enabled=False 时：
+        当 rerank=False 时：
         直接用 embedding 搜索返回 top_k 条
 
         Args:
             query: 查询文本
             top_k: 返回最相似的 K 个结果
+            rerank: 是否开启重排精排
+            candidate_count: 候选文档最大数量，当 candidate_count > top_k * 10 的时候，此配置失效
 
         Returns:
             List[Document]: 搜索结果列表，score 存储在 metadata["score"] 中
@@ -56,17 +60,17 @@ class VectorSearchService:
         """
         try:
             # 确定召回数量：启用 rerank 时召回更多候选，否则直接取 top_k
-            if config.rerank_enabled:
+            if rerank:
                 recall_count = min(
                     top_k * 10,
-                    config.rerank_candidate_count,
+                    candidate_count
                 )
             else:
                 recall_count = top_k
 
             logger.info(
                 f"开始搜索相似文档, 查询: {query[:50]}..., topK: {top_k}, "
-                f"召回数: {recall_count}, rerank: {config.rerank_enabled}"
+                f"召回数: {recall_count}, rerank: {rerank}"
             )
 
             # 1. 粗排：调用 vector_store_manager 召回候选文档
@@ -77,7 +81,7 @@ class VectorSearchService:
                 return []
 
             # 2. 如果启用 Rerank，对候选文档进行精排
-            if config.rerank_enabled and len(candidates) > 1:
+            if rerank and len(candidates) > top_k:
                 results = self._rerank_documents(query, candidates, top_k)
             else:
                 # 不启用 rerank 时，截取 top_k 条
@@ -94,10 +98,10 @@ class VectorSearchService:
             raise RuntimeError(f"搜索失败: {e}") from e
 
     def _rerank_documents(
-        self,
-        query: str,
-        candidates: List[Document],
-        top_k: int,
+            self,
+            query: str,
+            candidates: List[Document],
+            top_k: int,
     ) -> List[Document]:
         """
         使用 DashScope Rerank API 对候选文档进行精排

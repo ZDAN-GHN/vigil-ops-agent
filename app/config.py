@@ -29,9 +29,10 @@ class Settings(BaseSettings):
     port: int = 9999
 
     # DashScope 配置
-    dashscope_api_key: str = ""  # 默认空字符串，实际使用需从环境变量加载
+    dashscope_api_key: str = "sk:dashscope_api_key"  # 默认空字符串，实际使用需从环境变量加载
     dashscope_model: str = "qwen-max"
     dashscope_embedding_model: str = "text-embedding-v4"  # v4 支持多种维度（默认 1024）
+    dashscope_biz_space_api_base: str = "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1" # 业务空间的 api_base_url
 
     # Milvus 配置
     milvus_host: str = "localhost"
@@ -39,14 +40,7 @@ class Settings(BaseSettings):
     milvus_timeout: int = 10000  # 毫秒
 
     # RAG 配置
-    rag_top_k: int = 3
     rag_model: str = "qwen-max"  # 使用快速响应模型，不带扩展思考
-
-    # Rerank 重排配置
-    rerank_enabled: bool = False  # 是否启用 Rerank 重排（两阶段检索：粗排 + 精排）
-    rerank_candidate_count: int = 50  # 粗排召回候选数，默认 50
-    dashscope_rerank_model: str = "qwen3-rerank"  # DashScope Rerank 模型
-    dashscope_biz_space_api_base: str = "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1" # 业务空间的 api_base_url
 
     # 文档分块配置
     chunk_max_size: int = 800
