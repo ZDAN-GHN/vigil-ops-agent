@@ -96,7 +96,7 @@ class AIOpsService:
         Yields:
             Dict[str, Any]: 流式事件
         """
-        logger.info(f"[会话 {session_id}] 开始执行任务: {user_input}")
+        logger.info(f"[会话 {session_id}] 开始执行任务: {user_input[:50]}")
 
         try:
             # 初始化状态

@@ -1,4 +1,12 @@
-"""知识检索工具 - 从向量数据库中检索相关信息"""
+"""
+知识检索工具 - 从向量数据库中检索相关信息
+
+职责：调用 vector_search_service 检索文档，并格式化为 LLM 可用的上下文。
+检索编排（粗排 + 精排）由 vector_search_service 统一处理。
+
+依赖链：knowledge_tool → vector_search_service → vector_store_manager (粗排)
+                                          |---→ vector_rerank_service (精排)
+"""
 
 from typing import List, Tuple
 
@@ -7,7 +15,7 @@ from langchain_core.tools import tool
 from loguru import logger
 
 from app.config import config
-from app.services.vector_store_manager import vector_store_manager
+from app.services.vector_search_service import vector_search_service
 
 
 @tool(response_format="content_and_artifact")
@@ -23,26 +31,21 @@ def retrieve_knowledge(query: str) -> Tuple[str, List[Document]]:
         Tuple[str, List[Document]]: (格式化的上下文文本, 原始文档列表)
     """
     try:
-        logger.info(f"知识检索工具被调用: query='{query}'")
-        
-        # 从向量存储中检索相关文档
-        vector_store = vector_store_manager.get_vector_store()
-        retriever = vector_store.as_retriever(
-            search_kwargs={"k": config.rag_top_k}
-        )
-        
-        docs = retriever.invoke(query)
-        
+        logger.info(f"知识检索工具被调用: query='{query[:50]}...'")
+
+        # 调用 vector_search_service 进行检索（内部处理粗排 + 精排）
+        docs = vector_search_service.search(query, top_k=config.rag_top_k)
+
         if not docs:
             logger.warning("未检索到相关文档")
             return "没有找到相关信息。", []
-        
+
         # 格式化文档为上下文
         context = format_docs(docs)
-        
+
         logger.info(f"检索到 {len(docs)} 个相关文档")
         return context, docs
-        
+
     except Exception as e:
         logger.error(f"知识检索工具调用失败: {e}")
         return f"检索知识时发生错误: {str(e)}", []

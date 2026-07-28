@@ -71,7 +71,7 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
     logger.info("=== Planner：制定执行计划 ===")
 
     input_text = state.get("input", "")
-    logger.info(f"用户输入: {input_text}")
+    logger.info(f"用户输入: {input_text[:50]}")
 
     try:
         # 步骤1: 查询内部文档获取相关经验
@@ -147,7 +147,7 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
 
         logger.info(f"计划已生成，共 {len(plan_steps)} 个步骤")
         for i, step in enumerate(plan_steps, 1):
-            logger.info(f"  步骤{i}: {step}")
+            logger.info(f"  步骤{i}: {step}...")
 
         return {"plan": plan_steps}
 

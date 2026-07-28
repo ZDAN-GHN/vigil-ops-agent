@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     rag_top_k: int = 3
     rag_model: str = "qwen-max"  # 使用快速响应模型，不带扩展思考
 
+    # Rerank 重排配置
+    rerank_enabled: bool = False  # 是否启用 Rerank 重排（两阶段检索：粗排 + 精排）
+    rerank_candidate_count: int = 50  # 粗排召回候选数，默认 50
+    dashscope_rerank_model: str = "qwen3-rerank"  # DashScope Rerank 模型
+    dashscope_biz_space_api_base: str = "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1" # 业务空间的 api_base_url
+
     # 文档分块配置
     chunk_max_size: int = 800
     chunk_overlap: int = 100

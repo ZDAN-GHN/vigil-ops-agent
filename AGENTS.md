@@ -103,10 +103,11 @@ app/
 ├── services/          # 业务逻辑层
 │   ├── rag_agent_service.py   # RAG Agent —— LangGraph ReAct 对话代理
 │   ├── aiops_service.py       # AIOps —— LangGraph Plan-Execute-Replan 工作流
-│   ├── vector_store_manager.py    # Milvus VectorStore 封装
+│   ├── vector_store_manager.py    # 数据层：Milvus VectorStore 封装（CRUD）
 │   ├── vector_embedding_service.py # Embedding 服务（DashScope text-embedding-v4）
 │   ├── vector_index_service.py    # 向量索引（写入 Milvus）
-│   ├── vector_search_service.py   # 向量检索
+│   ├── vector_search_service.py   # 检索编排层：粗排 + Rerank 精排
+│   ├── vector_rerank_service.py   # 精排层：DashScope Rerank API 封装
 │   └── document_splitter_service.py # 文档分块（RecursiveCharacterTextSplitter）
 ├── agent/             # Agent 核心
 │   ├── mcp_client.py  # MultiServerMCPClient 全局单例 + 重试拦截器
@@ -135,7 +136,8 @@ app/
   → LangGraph Agent（ChatQwen + MemorySaver）
     → trim_messages_middleware 修剪历史（保留系统消息 + 最近 6 条）
     → Agent 决定是否调用工具：
-       - retrieve_knowledge → vector_store_manager → Milvus 检索
+       - retrieve_knowledge → vector_search_service → vector_store_manager (粗排)
+                                                       → vector_rerank_service (精排)
        - MCP 工具（cls/monitor）→ mcp_client
     → 流式输出 SSE 事件：tool_call / content / done / error
 ```
@@ -164,6 +166,7 @@ app/
 
 - `config.py`：所有配置通过 Pydantic Settings 从 `.env` 加载，全局 `config` 单例
 - 关键环境变量：`DASHSCOPE_API_KEY`、`DASHSCOPE_API_BASE`、`MILVUS_HOST/PORT`、`RAG_TOP_K`、`CHUNK_MAX_SIZE/OVERLAP`
+- Rerank 重排配置：`RERANK_ENABLED`（默认 `False`）、`RERANK_CANDIDATE_COUNT`（粗排召回数，默认 `30`）、`DASHSCOPE_RERANK_MODEL`（默认 `text-rerank-v1`）
 - MCP 服务器地址在 config 中配置（默认 `localhost:8003` 和 `localhost:8004`）
 
 ### 日志

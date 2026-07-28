@@ -142,7 +142,7 @@ class VectorStoreManager:
         """
         try:
             docs = self.vector_store.similarity_search(query, k=k)
-            logger.debug(f"相似度搜索完成: query='{query}', 结果数={len(docs)}")
+            logger.debug(f"相似度搜索完成: query='{query[:50]}...', 结果数={len(docs)}")
             return docs
         except Exception as e:
             logger.error(f"相似度搜索失败: {e}")
