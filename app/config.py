@@ -73,6 +73,16 @@ class Settings(BaseSettings):
     mysql_user: str = "root"
     mysql_password: str = ""
 
+    # JWT 认证配置
+    jwt_secret_key: str = "change-me-in-production-use-a-random-string"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
+
+    # 初始管理员配置（首次启动时自动创建）
+    initial_admin_username: str = "admin"
+    initial_admin_password: str = "admin123"
+
     @property
     def mcp_servers(self) -> Dict[str, Dict[str, Any]]:
         """获取完整的 MCP 服务器配置"""

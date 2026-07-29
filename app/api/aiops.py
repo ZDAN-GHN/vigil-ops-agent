@@ -3,18 +3,20 @@ AIOps 智能运维接口
 """
 
 import json
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sse_starlette.sse import EventSourceResponse
 from loguru import logger
 
 from app.models.aiops import AIOpsRequest
+from app.models.user import User
+from app.core.auth import get_current_user
 from app.services.aiops_service import aiops_service
 
 router = APIRouter()
 
 
 @router.post("/aiops")
-async def diagnose_stream(request: AIOpsRequest):
+async def diagnose_stream(request: AIOpsRequest, current_user: User = Depends(get_current_user)):
     """
     AIOps 故障诊断接口（流式 SSE）
 

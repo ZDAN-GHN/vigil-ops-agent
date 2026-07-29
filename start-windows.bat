@@ -1,174 +1,170 @@
 @echo off
-chcp 65001 >nul
+chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 
 echo ====================================
-echo 启动 OnCallAgent 服务
+echo Start OnCallAgent Services
 echo ====================================
 echo.
 
-REM 检查 uv 是否安装（可选，如果没有会使用 pip）
-echo [1/6] 检查包管理器...
+REM Check uv (optional, fallback to pip)
+echo [1/6] Check package manager...
 where uv >nul 2>&1
 if errorlevel 1 (
-    echo [信息] uv 未安装，将使用传统 pip 方式
-    echo [提示] 安装 uv 可提升速度：pip install uv
+    echo [INFO] uv not found, will use pip
+    echo [TIP] Install uv for speed: pip install uv
     set USE_UV=0
 ) else (
-    echo [成功] 检测到 uv 包管理器
+    echo [OK] uv detected
     set USE_UV=1
 )
 echo.
 
-REM 确保 Python 版本正确
-echo [2/6] 配置 Python 版本...
+REM Configure Python version
+echo [2/6] Configure Python version...
 if exist .python-version (
     set /p PYTHON_VERSION=<.python-version
-    echo [信息] 当前配置版本: !PYTHON_VERSION!
+    echo [INFO] Current version: !PYTHON_VERSION!
     
-    REM 检查是否为 3.10（不兼容）
+    REM Check 3.10 (incompatible)
     echo !PYTHON_VERSION! | findstr /C:"3.10" >nul
     if not errorlevel 1 (
-        echo [警告] Python 3.10 不兼容，自动更新到 3.13...
+        echo [WARN] Python 3.10 incompatible, updating to 3.13...
         echo 3.13> .python-version
-        echo [成功] 已更新到 Python 3.13
+        echo [OK] Updated to Python 3.13
     )
 ) else (
-    echo [信息] 创建 .python-version 文件...
+    echo [INFO] Creating .python-version...
     echo 3.13> .python-version
 )
 echo.
 
-REM 创建或同步虚拟环境
-echo [3/6] 创建/同步虚拟环境...
+REM Create or sync virtual environment
+echo [3/6] Setup virtual environment...
 if exist .venv\Scripts\python.exe (
-    echo [信息] 虚拟环境已存在，检查更新...
+    echo [INFO] Venv exists, checking updates...
     
-    REM 如果有 uv，尝试使用 uv sync
-    if "%USE_UV%"=="1" (
+    if "!USE_UV!"=="1" (
         uv sync 2>nul
         if errorlevel 1 (
-            echo [警告] uv sync 失败，使用 pip 更新...
+            echo [WARN] uv sync failed, using pip...
             .venv\Scripts\python.exe -m pip install -e . -q
         ) else (
-            echo [成功] 使用 uv 同步完成
+            echo [OK] uv sync done
         )
     ) else (
-        echo [信息] 使用 pip 更新依赖...
+        echo [INFO] Using pip to update...
         .venv\Scripts\python.exe -m pip install -e . -q
     )
 ) else (
-    echo [信息] 创建新的虚拟环境...
+    echo [INFO] Creating new venv...
     
-    REM 如果有 uv，尝试使用 uv sync
-    if "%USE_UV%"=="1" (
-        echo [信息] 尝试使用 uv sync 创建...
+    if "!USE_UV!"=="1" (
+        echo [INFO] Trying uv sync...
         uv sync 2>nul
         if not errorlevel 1 (
-            echo [成功] 使用 uv 创建完成
+            echo [OK] uv sync done
             goto :venv_created
         )
-        echo [警告] uv sync 失败，回退到传统方式...
+        echo [WARN] uv sync failed, fallback to venv...
     )
     
-    REM 使用传统 Python venv 创建
-    echo [信息] 使用 python -m venv 创建...
+    echo [INFO] Using python -m venv...
     python -m venv .venv
     if errorlevel 1 (
-        echo [错误] 虚拟环境创建失败
-        echo [提示] 请确保已安装 Python 3.11+
+        echo [ERROR] Venv creation failed
+        echo [TIP] Please install Python 3.11+
         pause
         exit /b 1
     )
     
-    REM 安装依赖
-    echo [信息] 安装项目依赖（这可能需要几分钟）...
+    echo [INFO] Installing dependencies...
     .venv\Scripts\python.exe -m pip install --upgrade pip -q
     .venv\Scripts\python.exe -m pip install -e . -q
     if errorlevel 1 (
-        echo [错误] 依赖安装失败
+        echo [ERROR] Install failed
         pause
         exit /b 1
     )
-    echo [成功] 虚拟环境创建完成
+    echo [OK] Venv created
 )
 
 :venv_created
-echo [成功] 虚拟环境就绪
+echo [OK] Virtual environment ready
 echo.
 
-REM 设置 Python 命令
+REM Set Python command
 set PYTHON_CMD=.venv\Scripts\python.exe
 
-REM 启动 Docker Compose
-echo [4/6] 启动 Milvus 向量数据库...
+REM Start Docker Compose (Milvus)
+echo [4/6] Start Milvus vector database...
 docker ps --format "{{.Names}}" | findstr "milvus-standalone" >nul 2>&1
 if not errorlevel 1 (
-    echo [信息] Milvus 容器已在运行
+    echo [INFO] Milvus container already running
 ) else (
     docker compose -f vector-database.yml up -d
     if errorlevel 1 (
-        echo [错误] Docker 启动失败，请确保 Docker Desktop 已启动
+        echo [ERROR] Docker failed, please start Docker Desktop
         pause
         exit /b 1
     )
-    echo [信息] 等待 Milvus 启动（10秒）...
+    echo [INFO] Waiting for Milvus (10s)...
     timeout /t 10 /nobreak >nul
 )
-echo [成功] Milvus 数据库就绪
+echo [OK] Milvus ready
 echo.
 
-REM 启动 CLS MCP 服务
-echo [5/6] 启动 CLS MCP 服务...
+REM Start CLS MCP Server
+echo [5/6] Start CLS MCP server...
 start "CLS MCP Server" /min %PYTHON_CMD% mcp_servers/cls_server.py
 timeout /t 2 /nobreak >nul
-echo [成功] CLS MCP 服务已启动
+echo [OK] CLS MCP server started
 echo.
 
-REM 启动 Monitor MCP 服务
-echo [6/6] 启动 Monitor MCP 服务...
+REM Start Monitor MCP Server
+echo [6/6] Start Monitor MCP server...
 start "Monitor MCP Server" /min %PYTHON_CMD% mcp_servers/monitor_server.py
 timeout /t 2 /nobreak >nul
-echo [成功] Monitor MCP 服务已启动
+echo [OK] Monitor MCP server started
 echo.
 
-REM 启动 FastAPI 服务
-echo [7/8] 启动 FastAPI 服务...
-start "OnCallAgent API" %PYTHON_CMD% -m uvicorn app.main:app --host 0.0.0.0 --port 9900
-echo [信息] 等待服务启动（15秒）...
+REM Start FastAPI with hot reload
+echo [7/8] Start FastAPI service (with hot reload)...
+start "OnCallAgent API" %PYTHON_CMD% -m uvicorn app.main:app --reload --host 0.0.0.0 --port 9900
+echo [INFO] Waiting for startup (15s)...
 timeout /t 15 /nobreak >nul
 echo.
 
-REM 检查服务状态并上传文档
+REM Check service status and upload docs
 echo.
-echo [信息] 检查服务状态...
+echo [INFO] Checking service status...
 curl -s http://localhost:9900/health >nul 2>&1
 if errorlevel 1 (
-    echo [警告] 服务可能还未完全启动，请稍等片刻
+    echo [WARN] Service may not be ready yet, please wait...
 ) else (
-    echo [成功] FastAPI 服务运行正常
+    echo [OK] FastAPI service running
     echo.
     
-    REM 调用 API 上传 aiops-docs 文档到向量数据库
-    echo [8/8] 上传文档到向量数据库...
+    REM Upload aiops-docs to vector database
+    echo [8/8] Upload docs to vector database...
     for %%f in (aiops-docs\*.md) do (
-        echo   上传: %%~nxf
+        echo   Upload: %%~nxf
         curl -s -X POST http://localhost:9900/api/upload -F "file=@%%f" >nul 2>&1
     )
-    echo [成功] 文档上传完成
+    echo [OK] Docs uploaded
 )
 
 echo.
 echo ====================================
-echo 服务启动完成！
+echo Services started!
 echo ====================================
-echo Web 界面: http://localhost:9900
-echo API 文档: http://localhost:9900/docs
+echo Web UI:    http://localhost:9900
+echo API Docs:  http://localhost:9900/docs
 echo.
-echo 查看日志:
-echo   - FastAPI: logs\app_*.log（Loguru 日志，按天轮转）
+echo Logs:
+echo   - FastAPI: logs\app_*.log (Loguru, daily rotation)
 echo   - CLS MCP: type mcp_cls.log
 echo   - Monitor: type mcp_monitor.log
-echo 停止服务: stop-windows.bat
+echo Stop:    stop-windows.bat
 echo ====================================
 pause

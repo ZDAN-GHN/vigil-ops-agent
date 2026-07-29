@@ -4,10 +4,12 @@
 """
 
 import json
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette.sse import EventSourceResponse
 from app.models.request import ChatRequest, ClearRequest
 from app.models.response import SessionInfoResponse, ApiResponse
+from app.models.user import User
+from app.core.auth import get_current_user
 from app.services.rag_agent_service import rag_agent_service
 from loguru import logger
 
@@ -15,7 +17,7 @@ router = APIRouter()
 
 
 @router.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, current_user: User = Depends(get_current_user)):
     """快速对话接口
     {
         "code": 200,
@@ -66,7 +68,7 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/chat_stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(request: ChatRequest, current_user: User = Depends(get_current_user)):
     """流式对话接口（基于 RAG Agent，SSE）
 
     返回 SSE 格式，data 字段为 JSON：
@@ -170,7 +172,7 @@ async def chat_stream(request: ChatRequest):
 
 
 @router.post("/chat/clear", response_model=ApiResponse)
-async def clear_session(request: ClearRequest):
+async def clear_session(request: ClearRequest, current_user: User = Depends(get_current_user)):
     """清空会话历史
 
     Args:
@@ -195,7 +197,7 @@ async def clear_session(request: ClearRequest):
 
 
 @router.get("/chat/session/{session_id}", response_model=SessionInfoResponse)
-async def get_session_info(session_id: str) -> SessionInfoResponse:
+async def get_session_info(session_id: str, current_user: User = Depends(get_current_user)) -> SessionInfoResponse:
     """查询会话历史
 
     Args:

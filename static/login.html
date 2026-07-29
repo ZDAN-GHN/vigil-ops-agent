@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>登录 - 智能 OnCall 助手</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <!-- 共享基础样式 -->
+    <link rel="stylesheet" href="/static/css/base.css">
+    <!-- 共享组件样式 -->
+    <link rel="stylesheet" href="/static/css/components.css">
+    <!-- 登录页专用样式 -->
+    <link rel="stylesheet" href="/static/css/login.css">
+</head>
+<body>
+    <!-- Aurora 动态渐变背景 -->
+    <div class="aurora-background" aria-hidden="true">
+        <div class="aurora-blob"></div>
+        <div class="aurora-blob"></div>
+        <div class="aurora-blob"></div>
+        <div class="aurora-blob"></div>
+        <div class="aurora-blob"></div>
+    </div>
+
+    <!-- 主题切换按钮 -->
+    <div class="login-theme-toggle">
+        <button class="theme-toggle-btn" id="themeToggleBtn" aria-label="切换主题">
+            <svg class="theme-icon-light" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <svg class="theme-icon-dark" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="display: none;">
+                <circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/>
+                <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span id="themeText">深色模式</span>
+        </button>
+    </div>
+
+    <!-- 登录页面主体 -->
+    <main class="login-page">
+        <div class="login-container card">
+            <!-- Logo -->
+            <div class="login-logo" id="loginLogo"></div>
+
+            <!-- 标题 -->
+            <h1 class="login-title">智能 OnCall 助手</h1>
+            <p class="login-subtitle">请登录您的账号</p>
+
+            <!-- 错误提示 -->
+            <div class="error-message" id="errorMessage"></div>
+
+            <!-- 登录表单 -->
+            <form class="login-form" id="loginForm" novalidate>
+                <!-- 用户名 -->
+                <div class="form-group">
+                    <label class="form-label" for="username">用户名</label>
+                    <input 
+                        type="text" 
+                        id="username" 
+                        name="username" 
+                        class="form-input" 
+                        placeholder="请输入用户名"
+                        autocomplete="username"
+                        required
+                        autofocus
+                    >
+                </div>
+
+                <!-- 密码 -->
+                <div class="form-group">
+                    <label class="form-label" for="password">密码</label>
+                    <div class="password-wrapper">
+                        <input 
+                            type="password" 
+                            id="password" 
+                            name="password" 
+                            class="form-input" 
+                            placeholder="请输入密码"
+                            autocomplete="current-password"
+                            required
+                        >
+                        <button type="button" class="password-toggle" id="passwordToggle" aria-label="显示密码">
+                            <svg class="eye-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 记住我 & 忘记密码 -->
+                <div class="form-options">
+                    <label class="remember-me">
+                        <input type="checkbox" id="rememberMe" name="rememberMe">
+                        <span>记住我</span>
+                    </label>
+                    <a href="#" class="forgot-password">忘记密码？</a>
+                </div>
+
+                <!-- 登录按钮 -->
+                <button type="submit" class="btn-primary" id="loginBtn">
+                    <span class="btn-text">登录</span>
+                </button>
+            </form>
+
+            <!-- 页脚 -->
+            <div class="login-footer">
+                <p>© 2024 智能 OnCall 助手 · <a href="/docs" target="_blank">API 文档</a></p>
+            </div>
+        </div>
+    </main>
+
+    <!-- 认证模块 -->
+    <script src="/static/js/auth.js"></script>
+    
+    <!-- 登录页脚本 -->
+    <script>
+        // 登录页应用
+        class LoginPageApp {
+            constructor() {
+                this.initializeElements();
+                this.initTheme();
+                this.initLogo();
+                this.bindEvents();
+                
+                // 如果已登录，直接跳转到首页
+                if (authManager.isLoggedIn()) {
+                    window.location.href = '/';
+                }
+            }
+
+            // 初始化 DOM 元素
+            initializeElements() {
+                this.loginForm = document.getElementById('loginForm');
+                this.usernameInput = document.getElementById('username');
+                this.passwordInput = document.getElementById('password');
+                this.passwordToggle = document.getElementById('passwordToggle');
+                this.loginBtn = document.getElementById('loginBtn');
+                this.errorMessage = document.getElementById('errorMessage');
+                this.themeToggleBtn = document.getElementById('themeToggleBtn');
+                this.themeText = document.getElementById('themeText');
+            }
+
+            // 初始化主题
+            initTheme() {
+                const savedTheme = localStorage.getItem('theme');
+                if (savedTheme) {
+                    document.documentElement.setAttribute('data-theme', savedTheme);
+                }
+                this.updateThemeUI();
+            }
+
+            // 切换主题
+            toggleTheme() {
+                const current = document.documentElement.getAttribute('data-theme');
+                const next = current === 'dark' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-theme', next);
+                localStorage.setItem('theme', next);
+                this.updateThemeUI();
+                this.updateLogo();
+            }
+
+            // 更新主题 UI
+            updateThemeUI() {
+                const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+                    (!document.documentElement.getAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+                if (this.themeText) {
+                    this.themeText.textContent = isDark ? '浅色模式' : '深色模式';
+                }
+
+                const lightIcon = document.querySelector('.theme-icon-light');
+                const darkIcon = document.querySelector('.theme-icon-dark');
+                if (lightIcon && darkIcon) {
+                    lightIcon.style.display = isDark ? 'none' : 'block';
+                    darkIcon.style.display = isDark ? 'block' : 'none';
+                }
+
+                // 更新 theme-color meta
+                const metaTheme = document.querySelector('meta[name="theme-color"]');
+                if (metaTheme) {
+                    metaTheme.setAttribute('content', isDark ? '#0d0d0d' : '#1a1a2e');
+                }
+            }
+
+            // 初始化 Logo
+            initLogo() {
+                this.updateLogo();
+            }
+
+            // 更新 Logo（根据主题）
+            updateLogo() {
+                const logoEl = document.getElementById('loginLogo');
+                if (!logoEl) return;
+                
+                const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+                    (!document.documentElement.getAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                
+                // 使用 logo-icon.svg
+                logoEl.innerHTML = `<img src="/static/img/logo-icon.svg" alt="Logo" width="100" height="100">`;
+            }
+
+            // 绑定事件
+            bindEvents() {
+                // 主题切换
+                if (this.themeToggleBtn) {
+                    this.themeToggleBtn.addEventListener('click', () => this.toggleTheme());
+                }
+
+                // 密码显示/隐藏
+                if (this.passwordToggle) {
+                    this.passwordToggle.addEventListener('click', () => this.togglePasswordVisibility());
+                }
+
+                // 表单提交
+                if (this.loginForm) {
+                    this.loginForm.addEventListener('submit', (e) => this.handleLogin(e));
+                }
+
+                // 输入框变化时清除错误
+                if (this.usernameInput) {
+                    this.usernameInput.addEventListener('input', () => this.hideError());
+                }
+                if (this.passwordInput) {
+                    this.passwordInput.addEventListener('input', () => this.hideError());
+                }
+            }
+
+            // 切换密码可见性
+            togglePasswordVisibility() {
+                const type = this.passwordInput.type === 'password' ? 'text' : 'password';
+                this.passwordInput.type = type;
+                
+                // 更新图标
+                const eyeIcon = this.passwordToggle.querySelector('.eye-icon');
+                if (type === 'text') {
+                    eyeIcon.innerHTML = `
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    `;
+                } else {
+                    eyeIcon.innerHTML = `
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+                    `;
+                }
+            }
+
+            // 处理登录
+            async handleLogin(e) {
+                e.preventDefault();
+                
+                const username = this.usernameInput.value.trim();
+                const password = this.passwordInput.value;
+
+                // 验证
+                if (!username) {
+                    this.showError('请输入用户名');
+                    this.usernameInput.focus();
+                    return;
+                }
+
+                if (!password) {
+                    this.showError('请输入密码');
+                    this.passwordInput.focus();
+                    return;
+                }
+
+                // 显示加载状态
+                this.setLoading(true);
+
+                try {
+                    const result = await authManager.login(username, password);
+                    
+                    if (result.success) {
+                        // 登录成功，跳转到首页
+                        this.showNotification('登录成功，正在跳转...', 'success');
+                        setTimeout(() => {
+                            window.location.href = '/';
+                        }, 500);
+                    } else {
+                        // 登录失败
+                        this.showError(result.error || '登录失败，请检查用户名和密码');
+                    }
+                } catch (error) {
+                    this.showError('网络错误，请稍后重试');
+                } finally {
+                    this.setLoading(false);
+                }
+            }
+
+            // 显示错误
+            showError(message) {
+                if (this.errorMessage) {
+                    this.errorMessage.textContent = message;
+                    this.errorMessage.classList.add('show');
+                }
+            }
+
+            // 隐藏错误
+            hideError() {
+                if (this.errorMessage) {
+                    this.errorMessage.classList.remove('show');
+                }
+            }
+
+            // 设置加载状态
+            setLoading(loading) {
+                if (this.loginBtn) {
+                    this.loginBtn.disabled = loading;
+                    if (loading) {
+                        this.loginBtn.innerHTML = `
+                            <span class="btn-loading">
+                                <span class="spinner"></span>
+                                <span>登录中...</span>
+                            </span>
+                        `;
+                    } else {
+                        this.loginBtn.innerHTML = '<span class="btn-text">登录</span>';
+                    }
+                }
+            }
+
+            // 显示通知
+            showNotification(message, type = 'info') {
+                const notification = document.createElement('div');
+                notification.className = `notification ${type}`;
+                notification.textContent = message;
+                
+                const colors = {
+                    info: '#0071e3',
+                    success: '#22c55e',
+                    warning: '#f59e0b',
+                    error: '#ef4444'
+                };
+                notification.style.backgroundColor = colors[type] || colors.info;
+                
+                document.body.appendChild(notification);
+                
+                setTimeout(() => {
+                    notification.style.animation = 'notification-slide-out 250ms cubic-bezier(0.4, 0, 0.2, 1)';
+                    setTimeout(() => {
+                        if (notification.parentNode) {
+                            notification.parentNode.removeChild(notification);
+                        }
+                    }, 300);
+                }, 3000);
+            }
+        }
+
+        // 初始化应用
+        document.addEventListener('DOMContentLoaded', () => {
+            new LoginPageApp();
+        });
+    </script>
+</body>
+</html>

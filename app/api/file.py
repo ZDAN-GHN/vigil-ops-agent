@@ -2,10 +2,12 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.config import BASE_DIR
+from app.models.user import User
+from app.core.auth import get_current_user
 from app.services.vector_index_service import vector_index_service
 from loguru import logger
 
@@ -20,7 +22,10 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
     """
     上传文件并自动创建向量索引
 
@@ -99,7 +104,10 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 @router.post("/index_directory")
-async def index_directory(directory_path: str = None):
+async def index_directory(
+    directory_path: str = None,
+    current_user: User = Depends(get_current_user),
+):
     """
     索引指定目录下的所有文件
 

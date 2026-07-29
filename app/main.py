@@ -12,12 +12,13 @@ import os
 
 from app.config import config
 from loguru import logger
-from app.api import chat, health, file, aiops
+from app.api import chat, health, file, aiops, auth
 from app.core.milvus_client import milvus_manager
 from app.core.redis_client import redis_manager
 from app.core.mysql_client import mysql_manager
 from app.services.scheduler_service import scheduled_aiops_service
 from app.services.long_term_memory_service import long_term_memory_service
+from app.services.auth_service import auth_service
 
 
 @asynccontextmanager
@@ -40,15 +41,20 @@ async def lifespan(app: FastAPI):
     await redis_manager.connect()
     logger.info("✅ Redis 连接成功")
 
-    # 连接 MySQL（用于长期记忆 - 用户画像）
-    # logger.info("🔌 正在连接 MySQL...")
-    # await mysql_manager.connect()
-    # logger.info("✅ MySQL 连接成功")
+    # 连接 MySQL（用于长期记忆 - 用户画像 + 用户认证）
+    logger.info("🔌 正在连接 MySQL...")
+    await mysql_manager.connect()
+    logger.info("✅ MySQL 连接成功")
 
     # 初始化长期记忆数据库表
-    # logger.info("📊 正在初始化长期记忆数据库表...")
-    # await long_term_memory_service.init_db()
-    # logger.info("✅ 长期记忆数据库表初始化完成")
+    logger.info("📊 正在初始化长期记忆数据库表...")
+    await long_term_memory_service.init_db()
+    logger.info("✅ 长期记忆数据库表初始化完成")
+
+    # 初始化用户认证表并创建初始管理员
+    logger.info("🔐 正在初始化用户认证系统...")
+    await auth_service.init_db()
+    logger.info("✅ 用户认证系统初始化完成")
 
     # 启动定时 AIOps 任务
     if config.enable_scheduled_aiops:
@@ -86,6 +92,7 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(health.router, tags=["健康检查"])
+app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(chat.router, prefix="/api", tags=["对话"])
 app.include_router(file.router, prefix="/api", tags=["文件管理"])
 app.include_router(aiops.router, prefix="/api", tags=["AIOps智能运维"])
@@ -105,6 +112,15 @@ async def root():
         "version": config.app_version,
         "docs": "/docs"
     }
+
+
+@app.get("/login")
+async def login_page():
+    """返回登录页面"""
+    login_path = os.path.join(static_dir, "login.html")
+    if os.path.exists(login_path):
+        return FileResponse(login_path)
+    return {"message": "Login page not found"}
 
 
 if __name__ == "__main__":
