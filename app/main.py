@@ -14,7 +14,10 @@ from app.config import config
 from loguru import logger
 from app.api import chat, health, file, aiops
 from app.core.milvus_client import milvus_manager
+from app.core.redis_client import redis_manager
+from app.core.mysql_client import mysql_manager
 from app.services.scheduler_service import scheduled_aiops_service
+from app.services.long_term_memory_service import long_term_memory_service
 
 
 @asynccontextmanager
@@ -32,6 +35,21 @@ async def lifespan(app: FastAPI):
     milvus_manager.connect()
     logger.info("✅ Milvus 连接成功")
 
+    # 连接 Redis（用于短期记忆 - 会话 checkpoint）
+    logger.info("🔌 正在连接 Redis...")
+    await redis_manager.connect()
+    logger.info("✅ Redis 连接成功")
+
+    # 连接 MySQL（用于长期记忆 - 用户画像）
+    # logger.info("🔌 正在连接 MySQL...")
+    # await mysql_manager.connect()
+    # logger.info("✅ MySQL 连接成功")
+
+    # 初始化长期记忆数据库表
+    # logger.info("📊 正在初始化长期记忆数据库表...")
+    # await long_term_memory_service.init_db()
+    # logger.info("✅ 长期记忆数据库表初始化完成")
+
     # 启动定时 AIOps 任务
     if config.enable_scheduled_aiops:
         await scheduled_aiops_service.start()
@@ -42,8 +60,10 @@ async def lifespan(app: FastAPI):
 
     # 关闭时执行
     await scheduled_aiops_service.stop()
-    logger.info("🔌 正在关闭 Milvus 连接...")
+    logger.info("🔌 正在关闭连接...")
     milvus_manager.close()
+    await redis_manager.close()
+    await mysql_manager.close()
     logger.info(f"👋 {config.app_name} 关闭")
 
 

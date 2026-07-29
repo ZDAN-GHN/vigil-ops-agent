@@ -30,9 +30,10 @@ class Settings(BaseSettings):
 
     # DashScope 配置
     dashscope_api_key: str = "sk:dashscope_api_key"  # 默认空字符串，实际使用需从环境变量加载
-    dashscope_model: str = "qwen-max"
+    dashscope_model: str = "qwen-max" # 对话模型
     dashscope_embedding_model: str = "text-embedding-v4"  # v4 支持多种维度（默认 1024）
     dashscope_biz_space_api_base: str = "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1" # 业务空间的 api_base_url
+    dashscope_rerank_model: str = "qwen3-rerank" # rerank 重排模型
 
     # Milvus 配置
     milvus_host: str = "localhost"
@@ -57,6 +58,20 @@ class Settings(BaseSettings):
     scheduled_aiops_interval_seconds: int = 300
     scheduled_aiops_webhook_url: str = ""
     scheduled_aiops_session_id: str = "_scheduled_aiops"
+
+    # Redis 配置（用于短期记忆 - 会话 checkpoint）
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
+    redis_password: str = ""  # 空字符串表示无密码
+    redis_checkpoint_ttl: int = 604800  # checkpoint 过期时间，默认 7 天（秒）
+
+    # MySQL 配置（用于长期记忆 - 用户画像）
+    mysql_host: str = "localhost"
+    mysql_port: int = 3306
+    mysql_db: str = "oncall_agent"
+    mysql_user: str = "root"
+    mysql_password: str = ""
 
     @property
     def mcp_servers(self) -> Dict[str, Dict[str, Any]]:

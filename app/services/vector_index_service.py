@@ -61,7 +61,9 @@ class VectorIndexService:
 
     def __init__(self):
         """初始化向量索引服务"""
-        self.upload_path = "./uploads"
+        from app.config import BASE_DIR
+
+        self.upload_path = str(BASE_DIR / "uploads")
         logger.info("向量索引服务初始化完成")
 
     def index_directory(self, directory_path: Optional[str] = None) -> IndexingResult:
