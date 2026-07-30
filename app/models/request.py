@@ -3,13 +3,14 @@
 定义 API 请求的 Pydantic 模型
 """
 
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
     """对话请求"""
-
-    id: str = Field(..., description="会话 ID", alias="Id")
+    
+    session_id: Optional[str] = Field(None, description="会话 ID（可选，为空时后端自动生成）", alias="Id")
     question: str = Field(..., description="用户问题", alias="Question")
 
     class Config:
@@ -29,3 +30,21 @@ class ClearRequest(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+# ── 会话管理相关请求 ──────────────────────────
+
+
+class CreateSessionRequest(BaseModel):
+    """创建会话请求"""
+
+    title: str = Field("", description="会话标题", alias="title")
+
+    class Config:
+        populate_by_name = True
+
+
+class UpdateSessionRequest(BaseModel):
+    """更新会话请求"""
+
+    title: str = Field(..., description="新标题")

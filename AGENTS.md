@@ -98,11 +98,16 @@ app/
 ├── api/               # 路由层 —— 薄层，只做请求/响应转换
 │   ├── chat.py        # /api/chat, /api/chat_stream (SSE), /api/chat/clear
 │   ├── aiops.py       # /api/aiops (SSE 流式诊断)
+│   ├── sessions.py      # /api/sessions (会话列表/创建/更新/删除)
 │   ├── file.py        # /api/upload (文档上传 → 向量化)
 │   └── health.py      # /health
 ├── services/          # 业务逻辑层
 │   ├── rag_agent_service.py   # RAG Agent —— LangGraph ReAct 对话代理
 │   ├── aiops_service.py       # AIOps —— LangGraph Plan-Execute-Replan 工作流
+│   ├── conversation_session_service.py # 会话管理服务（CRUD + 软删除）
+│   ├── conversation_history_service.py # 对话历史持久化（MySQL + Redis 恢复）
+│   ├── message_queue_service.py # 消息队列服务（Redis List + 内存兜底）
+│   ├── long_term_memory_service.py # 长期记忆（用户画像）
 │   ├── vector_store_manager.py    # 数据层：Milvus VectorStore 封装（CRUD）
 │   ├── vector_embedding_service.py # Embedding 服务（DashScope text-embedding-v4）
 │   ├── vector_index_service.py    # 向量索引（写入 Milvus）
@@ -120,6 +125,9 @@ app/
 │   ├── knowledge_tool.py  # 知识检索（从 Milvus 检索 → 返回上下文）
 │   └── time_tool.py       # 获取当前时间
 ├── models/            # Pydantic 请求/响应模型
+│   ├── conversation_session.py # 会话管理表 ORM 模型
+│   ├── conversation_history.py # 对话历史表 ORM 模型
+│   └── user_profile.py  # 用户画像 + 对话摘要 ORM 模型
 ├── core/              # 基础设施
 │   ├── llm_factory.py     # LLM 工厂（DashScope/ChatQwen 实例化）
 │   └── milvus_client.py   # Milvus 连接管理（单例）
@@ -133,6 +141,9 @@ app/
 
 ```
 用户请求 → chat.py → rag_agent_service.query_stream()
+  → _ensure_checkpoint_restored()
+    → Redis 有 checkpoint → 直接使用
+    → Redis 无 checkpoint → 从 MySQL 加载 → 写回 Redis (TTL=7天)
   → LangGraph Agent（ChatQwen + MemorySaver）
     → trim_messages_middleware 修剪历史（保留系统消息 + 最近 6 条）
     → Agent 决定是否调用工具：
@@ -140,6 +151,9 @@ app/
                                                        → vector_rerank_service (精排)
        - MCP 工具（cls/monitor）→ mcp_client
     → 流式输出 SSE 事件：tool_call / content / done / error
+  → _sync_to_mysql()
+    → 消息序列化 → 推入消息队列（Redis List / 内存兜底）
+    → 后台消费者协程异步消费 → 写入 MySQL
 ```
 
 **2. AIOps 诊断（`/api/aiops`）**
@@ -161,11 +175,16 @@ app/
 - **MCP 工具聚合**：`mcp_client.py` 用 `MultiServerMCPClient` 连接多个 MCP 服务器，`retry_interceptor` 提供指数退避重试。
 - **SSE 流式协议**：`/api/chat_stream` 和 `/api/aiops` 都通过 `sse-starlette` 返回，data 字段为 JSON（`type` 区分事件类型）。
 - **向量化管道**：文件上传 → `document_splitter_service` 分块 → `vector_embedding_service` embedding → `vector_index_service` 写入 Milvus collection `biz`。
+- **对话历史异步持久化**：对话完成后消息推入 Redis List 消息队列（失败降级到内存队列），后台消费者协程批量消费并写入 MySQL。三级兜底：Redis → 内存队列 → 兜底日志文件。
+- **Redis checkpoint + MySQL 备份**：短期记忆存储在 Redis（TTL 7 天），过期后自动从 MySQL 恢复到 Redis，保证对话上下文不丢失。
+- **会话管理**：`conversation_sessions` 表管理用户会话列表，支持软删除。对话时自动创建/更新会话记录，用户可查询自己的会话列表。
 
 ### 配置文件
 
 - `config.py`：所有配置通过 Pydantic Settings 从 `.env` 加载，全局 `config` 单例
 - 关键环境变量：`DASHSCOPE_API_KEY`、`DASHSCOPE_API_BASE`、`MILVUS_HOST/PORT`、`RAG_TOP_K`、`CHUNK_MAX_SIZE/OVERLAP`
+- 对话历史持久化配置：`CONVERSATION_HISTORY_ENABLED`（默认 `True`）、`CONVERSATION_HISTORY_REDIS_TTL`（默认 `604800` 秒 = 7 天）
+- 消息队列配置：`MQ_QUEUE_KEY`（Redis List key，默认 `mq:conversation_history`）、`MQ_BATCH_SIZE`（默认 `10`）、`MQ_RETRY_COUNT`（默认 `3`）、`MQ_FALLBACK_LOG_FILE`（默认 `logs/mq_fallback.jsonl`）
 - Rerank 重排配置：`RERANK_ENABLED`（默认 `False`）、`RERANK_CANDIDATE_COUNT`（粗排召回数，默认 `30`）、`DASHSCOPE_RERANK_MODEL`（默认 `text-rerank-v1`）
 - MCP 服务器地址在 config 中配置（默认 `localhost:8003` 和 `localhost:8004`）
 

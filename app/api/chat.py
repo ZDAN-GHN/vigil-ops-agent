@@ -11,12 +11,13 @@ from app.models.response import SessionInfoResponse, ApiResponse
 from app.models.user import User
 from app.core.auth import get_current_user
 from app.services.rag_agent_service import rag_agent_service
+from app.services.conversation_session_service import conversation_session_service
 from loguru import logger
 
 router = APIRouter()
 
 
-@router.post("/chat")
+@router.post("/completion")
 async def chat(request: ChatRequest, current_user: User = Depends(get_current_user)):
     """快速对话接口
     {
@@ -25,6 +26,7 @@ async def chat(request: ChatRequest, current_user: User = Depends(get_current_us
         "data": {
             "success": true,
             "answer": "回答内容",
+            "session_id": "会话 ID",
             "errorMessage": null
         }
     }
@@ -36,13 +38,47 @@ async def chat(request: ChatRequest, current_user: User = Depends(get_current_us
         统一格式的对话响应
     """
     try:
-        logger.info(f"[会话 {request.id}] 收到快速对话请求: {request.question}")
+        # 如果 session_id 为空，创建新会话
+        if not request.session_id:
+            session = await conversation_session_service.create_session(
+                user_id=current_user.id,
+                title=request.question[:50] if len(request.question) > 50 else request.question,
+            )
+            session_id = session.session_id
+            logger.info(f"创建新会话: {session_id}")
+        else:
+            session_id = request.session_id
+            # 验证会话归属
+            existing_session = await conversation_session_service.get_session(
+                session_id=session_id,
+                user_id=current_user.id,
+            )
+            if not existing_session:
+                return {
+                    "code": 403,
+                    "message": "error",
+                    "data": {
+                        "success": False,
+                        "answer": None,
+                        "session_id": None,
+                        "errorMessage": "会话不存在或无权访问"
+                    }
+                }
+
+        logger.info(f"[会话 {session_id}] 收到快速对话请求: {request.question}")
+
         answer = await rag_agent_service.query(
             request.question,
-            session_id=request.id
+            session_id=session_id
         )
 
-        logger.info(f"[会话 {request.id}] 快速对话完成")
+        # 增加消息计数（用户提问 + AI 回答 = 2 条）
+        await conversation_session_service.increment_message_count(
+            session_id=session_id,
+            count=2,
+        )
+
+        logger.info(f"[会话 {session_id}] 快速对话完成")
 
         return {
             "code": 200,
@@ -50,6 +86,7 @@ async def chat(request: ChatRequest, current_user: User = Depends(get_current_us
             "data": {
                 "success": True,
                 "answer": answer,
+                "session_id": session_id,
                 "errorMessage": None
             }
         }
@@ -62,16 +99,21 @@ async def chat(request: ChatRequest, current_user: User = Depends(get_current_us
             "data": {
                 "success": False,
                 "answer": None,
+                "session_id": None,
                 "errorMessage": str(e)
             }
         }
 
 
-@router.post("/chat_stream")
+@router.post("/stream")
 async def chat_stream(request: ChatRequest, current_user: User = Depends(get_current_user)):
     """流式对话接口（基于 RAG Agent，SSE）
 
     返回 SSE 格式，data 字段为 JSON：
+
+    会话创建事件（仅在创建新会话时发送）:
+    event: message
+    data: {"type":"session_created","data":{"session_id":"xxx"}}
 
     工具调用事件:
     event: message
@@ -91,11 +133,49 @@ async def chat_stream(request: ChatRequest, current_user: User = Depends(get_cur
     Returns:
         SSE 事件流
     """
-    logger.info(f"[会话 {request.id}] 收到流式对话请求: {request.question}")
+    # 如果 session_id 为空，创建新会话
+    session_created = False
+    if not request.session_id:
+        session = await conversation_session_service.create_session(
+            user_id=current_user.id,
+            title=request.question[:50] if len(request.question) > 50 else request.question,
+        )
+        session_id = session.session_id
+        session_created = True
+        logger.info(f"创建新会话: {session_id}")
+    else:
+        session_id = request.session_id
+        # 验证会话归属
+        existing_session = await conversation_session_service.get_session(
+            session_id=session_id,
+            user_id=current_user.id,
+        )
+        if not existing_session:
+            async def error_generator():
+                yield {
+                    "event": "message",
+                    "data": json.dumps({
+                        "type": "error",
+                        "data": "会话不存在或无权访问"
+                    }, ensure_ascii=False)
+                }
+            return EventSourceResponse(error_generator())
+
+    logger.info(f"[会话 {session_id}] 收到流式对话请求: {request.question}")
 
     async def event_generator():
         try:
-            async for chunk in rag_agent_service.query_stream(request.question, session_id=request.id):
+            # 如果是新创建的会话，先发送 session_created 事件
+            if session_created:
+                yield {
+                    "event": "message",
+                    "data": json.dumps({
+                        "type": "session_created",
+                        "data": {"session_id": session_id}
+                    }, ensure_ascii=False)
+                }
+
+            async for chunk in rag_agent_service.query_stream(request.question, session_id=session_id):
                 chunk_type = chunk.get("type", "unknown")
                 chunk_data = chunk.get("data", None)
 
@@ -156,7 +236,13 @@ async def chat_stream(request: ChatRequest, current_user: User = Depends(get_cur
                         }, ensure_ascii=False)
                     }
 
-            logger.info(f"[会话 {request.id}] 流式对话完成")
+            logger.info(f"[会话 {session_id}] 流式对话完成")
+
+            # 增加消息计数（用户提问 + AI 回答 = 2 条）
+            await conversation_session_service.increment_message_count(
+                session_id=session_id,
+                count=2,
+            )
 
         except Exception as e:
             logger.error(f"流式对话接口错误: {e}")
@@ -171,7 +257,7 @@ async def chat_stream(request: ChatRequest, current_user: User = Depends(get_cur
     return EventSourceResponse(event_generator())
 
 
-@router.post("/chat/clear", response_model=ApiResponse)
+@router.post("/clear", response_model=ApiResponse)
 async def clear_session(request: ClearRequest, current_user: User = Depends(get_current_user)):
     """清空会话历史
 
@@ -196,7 +282,7 @@ async def clear_session(request: ClearRequest, current_user: User = Depends(get_
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/chat/session/{session_id}", response_model=SessionInfoResponse)
+@router.get("/session/{session_id}", response_model=SessionInfoResponse)
 async def get_session_info(session_id: str, current_user: User = Depends(get_current_user)) -> SessionInfoResponse:
     """查询会话历史
 

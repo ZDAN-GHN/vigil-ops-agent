@@ -66,6 +66,16 @@ class Settings(BaseSettings):
     redis_password: str = ""  # 空字符串表示无密码
     redis_checkpoint_ttl: int = 604800  # checkpoint 过期时间，默认 7 天（秒）
 
+    # 对话历史持久化配置（MySQL 备份 + Redis fallback）
+    conversation_history_enabled: bool = True  # 是否启用对话历史 MySQL 持久化
+    conversation_history_redis_ttl: int = 604800  # 从 MySQL 恢复到 Redis 时的 TTL，默认 7 天（秒）
+
+    # 消息队列配置（异步持久化对话历史）
+    mq_queue_key: str = "mq:conversation_history"  # Redis List key
+    mq_batch_size: int = 10  # 每批消费的消息数量
+    mq_retry_count: int = 3  # 消费失败重试次数
+    mq_fallback_log_file: str = "logs/mq_fallback.jsonl"  # 兜底日志文件路径
+
     # MySQL 配置（用于长期记忆 - 用户画像）
     mysql_host: str = "localhost"
     mysql_port: int = 3306

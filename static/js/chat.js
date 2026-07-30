@@ -39,6 +39,11 @@ function createChatModule(app) {
                 } else if (app.currentMode === 'stream') {
                     await this.sendStreamMessage(message);
                 }
+                
+                // 通知会话模块刷新列表（更新消息计数）
+                if (typeof app.onMessageSent === 'function') {
+                    app.onMessageSent();
+                }
             } catch (error) {
                 console.error('发送消息失败:', error);
                 this.addMessage('assistant', '抱歉，发送消息时出现错误：' + error.message);
@@ -54,13 +59,18 @@ function createChatModule(app) {
             const loadingMessage = this.addLoadingMessage('正在思考...');
             
             try {
+                // 构建请求体，如果 sessionId 为空则不传 Id 字段
+                const requestBody = {
+                    Question: message
+                };
+                if (app.sessionId) {
+                    requestBody.Id = app.sessionId;
+                }
+
                 // 使用认证请求
-                const response = await authManager.authFetch(`${app.apiBaseUrl}/chat`, {
+                const response = await authManager.authFetch(`${app.apiBaseUrl}/chat/completion`, {
                     method: 'POST',
-                    body: JSON.stringify({
-                        Id: app.sessionId,
-                        Question: message
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 if (!response.ok) {
@@ -81,6 +91,12 @@ function createChatModule(app) {
                     const chatResponse = data.data;
                     
                     if (chatResponse && chatResponse.success) {
+                        // 保存后端返回的 session_id
+                        if (chatResponse.session_id) {
+                            app.sessionId = chatResponse.session_id;
+                            console.log('[sendQuickMessage] 保存 session_id:', app.sessionId);
+                        }
+                        
                         // 成功：添加实际响应消息（即使 answer 为空也显示）
                         const answer = chatResponse.answer || '（无回复内容）';
                         this.addMessage('assistant', answer);
@@ -108,13 +124,18 @@ function createChatModule(app) {
         // 发送流式消息
         async sendStreamMessage(message) {
             try {
+                // 构建请求体，如果 sessionId 为空则不传 Id 字段
+                const requestBody = {
+                    Question: message
+                };
+                if (app.sessionId) {
+                    requestBody.Id = app.sessionId;
+                }
+
                 // 使用认证请求
-                const response = await authManager.authFetch(`${app.apiBaseUrl}/chat_stream`, {
+                const response = await authManager.authFetch(`${app.apiBaseUrl}/chat/stream`, {
                     method: 'POST',
-                    body: JSON.stringify({
-                        Id: app.sessionId,
-                        Question: message
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 if (!response.ok) {
@@ -183,7 +204,14 @@ function createChatModule(app) {
                                     console.log('[SSE调试] 解析JSON成功:', sseMessage);
                                     
                                     if (sseMessage && typeof sseMessage.type === 'string') {
-                                        if (sseMessage.type === 'content') {
+                                        if (sseMessage.type === 'session_created') {
+                                            // 保存后端返回的 session_id
+                                            if (sseMessage.data && sseMessage.data.session_id) {
+                                                app.sessionId = sseMessage.data.session_id;
+                                                console.log('[SSE调试] 保存 session_id:', app.sessionId);
+                                            }
+                                            continue;
+                                        } else if (sseMessage.type === 'content') {
                                             const content = sseMessage.data || '';
                                             fullResponse += content;
                                             console.log('[SSE调试] 添加内容:', content);

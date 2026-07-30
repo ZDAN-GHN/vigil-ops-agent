@@ -79,6 +79,49 @@ CREATE TABLE IF NOT EXISTS `conversation_summaries` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='对话摘要历史表';
 
 -- =====================================================
+-- 表4: conversation_sessions - 会话管理表
+-- 用途：管理用户的对话会话，记录会话元数据。
+--       用户可以查询自己拥有的会话列表，实现会话的生命周期管理。
+-- 对应模型：app/models/conversation_session.py -> ConversationSession
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `conversation_sessions` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `session_id` VARCHAR(128) NOT NULL COMMENT '会话ID（唯一，与前端传入的 id 对应）',
+    `user_id` INT NOT NULL COMMENT '用户ID（关联 users.id）',
+    `title` VARCHAR(256) NOT NULL DEFAULT '' COMMENT '会话标题',
+    `message_count` INT NOT NULL DEFAULT 0 COMMENT '消息数量（冗余字段，便于排序）',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后更新时间',
+    `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已删除：0=未删除，1=已删除（软删除）',
+    
+    -- 索引
+    UNIQUE KEY `uk_session_id` (`session_id`),
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_user_updated` (`user_id`, `updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='会话管理表（用户会话列表）';
+
+-- =====================================================
+-- 表5: conversation_histories - 对话历史表
+-- 用途：存储完整的对话消息记录，作为 Redis checkpoint 的 MySQL 持久化备份。
+--       当 Redis TTL 过期后，可从 MySQL 恢复对话上下文到 Redis。
+-- 对应模型：app/models/conversation_history.py -> ConversationHistory
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `conversation_histories` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `session_id` VARCHAR(128) NOT NULL COMMENT '会话ID（即 thread_id）',
+    `role` VARCHAR(32) NOT NULL COMMENT '消息角色: user/assistant/system/summary',
+    `content` TEXT NOT NULL COMMENT '消息内容',
+    `message_order` INT NOT NULL COMMENT '消息在会话中的顺序（从 0 开始递增）',
+    `tool_calls` TEXT NULL COMMENT '工具调用信息 JSON（可选）',
+    `metadata_json` TEXT NULL COMMENT '额外元数据 JSON（可选）',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    
+    -- 索引
+    KEY `idx_session_id` (`session_id`),
+    KEY `ix_session_order` (`session_id`, `message_order`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='对话历史表（Redis checkpoint 的 MySQL 持久化备份）';
+
+-- =====================================================
 -- 初始化数据（可选）
 -- =====================================================
 -- 如需创建初始管理员，可执行以下语句（密码需要预先用 bcrypt 哈希）
@@ -97,3 +140,5 @@ CREATE TABLE IF NOT EXISTS `conversation_summaries` (
 --   DESCRIBE users;
 --   DESCRIBE user_profiles;
 --   DESCRIBE conversation_summaries;
+--   DESCRIBE conversation_sessions;
+--   DESCRIBE conversation_histories;

@@ -971,5 +971,4 @@ __all__ = [
     "BaseRedisSaver",
     "RedisSaver",
     "AsyncRedisSaver",
-    "RedisMemorySaver",
 ]

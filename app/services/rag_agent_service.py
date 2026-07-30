@@ -22,6 +22,7 @@ from app.config import config
 from app.tools import get_current_time, retrieve_knowledge
 from app.agent.mcp_client import get_mcp_client_with_retry
 from app.core.redis_checkpointer import AsyncRedisSaver
+from app.services.conversation_history_service import conversation_history_service
 
 # 阿里千问大模型和langchain集成参考： https://docs.langchain.com/oss/python/integrations/chat/qwen
 # 注意：需要配置环境变量 DASHSCOPE_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1 否则默认访问的是新加坡站点
@@ -212,6 +213,110 @@ class RagAgentService:
             请根据用户的问题，灵活使用可用工具，提供高质量的帮助。
         """).strip()
 
+    async def _ensure_checkpoint_restored(self, session_id: str) -> None:
+        """确保 Redis checkpoint 存在，若不存在则从 MySQL 恢复
+
+        当 Redis TTL 过期导致 checkpoint 丢失时，从 MySQL 对话历史表
+        加载历史消息并写回 Redis checkpointer，使 LangGraph 能恢复上下文。
+
+        Args:
+            session_id: 会话 ID
+        """
+        if not config.conversation_history_enabled:
+            return
+
+        if self.checkpointer is None:
+            return
+
+        # 检查 Redis 中是否已有 checkpoint
+        cfg = {"configurable": {"thread_id": session_id}}
+        checkpoint_tuple = await self.checkpointer.aget_tuple(cfg)
+        if checkpoint_tuple is not None:
+            # Redis 中有数据，无需恢复
+            return
+
+        # Redis 中无数据，尝试从 MySQL 恢复
+        logger.info(f"[会话 {session_id}] Redis checkpoint 不存在，尝试从 MySQL 恢复...")
+        mysql_messages = await conversation_history_service.load_messages(session_id)
+        if not mysql_messages:
+            logger.info(f"[会话 {session_id}] MySQL 中也无历史记录")
+            return
+
+        # 将 MySQL 中的历史消息恢复到 Redis checkpointer
+        # 构造一个初始 checkpoint 来存储这些消息
+        from langgraph.checkpoint.base import Checkpoint
+        from datetime import datetime, timezone
+        import uuid
+
+        checkpoint = Checkpoint(
+            v=1,
+            id=str(uuid.uuid4()),
+            ts=datetime.now(timezone.utc).isoformat(),
+            channel_values={"messages": mysql_messages},
+            channel_versions={"messages": 1},
+            versions_seen={},
+            updated_channels=None,
+        )
+        metadata = {"source": "mysql_restore", "step": 0, "parents": {}}
+        restore_config = {
+            "configurable": {
+                "thread_id": session_id,
+                "checkpoint_ns": "",
+            }
+        }
+
+        await self.checkpointer.aput(
+            restore_config, checkpoint, metadata, {"messages": 1}
+        )
+
+        # 设置 TTL
+        if self.checkpointer.ttl > 0:
+            key = self.checkpointer._key(session_id, "")
+            await self.checkpointer.conn.expire(key, config.conversation_history_redis_ttl)
+
+        logger.info(
+            f"[会话 {session_id}] 已从 MySQL 恢复 {len(mysql_messages)} 条消息到 Redis "
+            f"(TTL={config.conversation_history_redis_ttl}s)"
+        )
+
+    async def _sync_to_mysql(self, session_id: str, result: dict) -> None:
+        """将对话结果推入消息队列，异步持久化到 MySQL
+
+        在 Agent 执行完成后，将本轮对话的新消息序列化后推入消息队列，
+        由后台消费者协程异步消费并写入 MySQL。非阻塞，不影响响应速度。
+
+        Args:
+            session_id: 会话 ID
+            result: Agent 执行结果
+        """
+        if not config.conversation_history_enabled:
+            return
+
+        try:
+            messages_result = result.get("messages", [])
+            if not messages_result:
+                return
+
+            # 获取当前 MySQL 中已有的最大序号
+            max_order = await conversation_history_service.get_max_order(session_id)
+            start_order = max_order + 1
+
+            # 推入消息队列（非阻塞）
+            success = await conversation_history_service.enqueue_for_persist(
+                session_id, messages_result, start_order=start_order
+            )
+            if success:
+                logger.info(
+                    f"[会话 {session_id}] 已将消息推入队列，等待异步持久化"
+                )
+            else:
+                logger.warning(
+                    f"[会话 {session_id}] 消息入队失败（已记录兜底日志）"
+                )
+        except Exception as e:
+            # 入队失败不影响主流程
+            logger.error(f"[会话 {session_id}] 推入消息队列失败: {e}")
+
     async def query(
         self,
         question: str,
@@ -229,6 +334,9 @@ class RagAgentService:
         """
         try:
             await self._initialize_agent()
+
+            # 确保 Redis checkpoint 存在（若过期则从 MySQL 恢复）
+            await self._ensure_checkpoint_restored(session_id)
 
             logger.info(f"[会话 {session_id}] RAG Agent 收到查询（非流式）: {question}")
 
@@ -252,6 +360,9 @@ class RagAgentService:
                 input=agent_input,
                 config=config_dict,
             )
+
+            # 异步同步到 MySQL（不阻塞主流程）
+            await self._sync_to_mysql(session_id, result)
 
             # 提取最终答案
             messages_result = result.get("messages", [])
@@ -294,6 +405,9 @@ class RagAgentService:
         try:
             await self._initialize_agent()
 
+            # 确保 Redis checkpoint 存在（若过期则从 MySQL 恢复）
+            await self._ensure_checkpoint_restored(session_id)
+
             logger.info(f"[会话 {session_id}] RAG Agent 收到查询（流式）: {question}")
 
             # 构建消息列表（系统提示 + 用户问题）
@@ -311,6 +425,9 @@ class RagAgentService:
                     "thread_id": session_id
                 }
             }
+
+            # 收集流式输出中的完整消息，用于后续同步到 MySQL
+            collected_messages: list[BaseMessage] = []
 
             async for token, metadata in self.agent.astream(
                 input=agent_input,
@@ -334,6 +451,17 @@ class RagAgentService:
                                         "node": node_name
                                     }
 
+            # 流式完成后，从 Redis checkpoint 获取完整消息并同步到 MySQL
+            try:
+                checkpoint_tuple = await self.checkpointer.aget_tuple(config_dict)
+                if checkpoint_tuple:
+                    all_messages = checkpoint_tuple.checkpoint.get(
+                        "channel_values", {}
+                    ).get("messages", [])
+                    await self._sync_to_mysql(session_id, {"messages": all_messages})
+            except Exception as sync_err:
+                logger.warning(f"[会话 {session_id}] 流式完成后同步 MySQL 失败: {sync_err}")
+
             logger.info(f"[会话 {session_id}] RAG Agent 查询完成（流式）")
             yield {"type": "complete"}
 
@@ -347,7 +475,7 @@ class RagAgentService:
 
     async def get_session_history(self, session_id: str) -> list:
         """
-        获取会话历史（从 Redis checkpointer 中读取）
+        获取会话历史（优先从 Redis checkpointer 读取，Redis 无数据时从 MySQL 加载）
 
         Args:
             session_id: 会话ID（即 thread_id）
@@ -356,23 +484,30 @@ class RagAgentService:
             list: 消息历史列表 [{"role": "user|assistant|summary", "content": "...", "timestamp": "..."}]
         """
         try:
-            if self.checkpointer is None:
-                logger.warning("Checkpointer 未初始化")
-                return []
+            messages: list[BaseMessage] = []
+            source = "none"
 
-            # 使用 checkpointer 的 aget 方法获取最新的检查点
-            cfg = {"configurable": {"thread_id": session_id}}
+            # 1. 优先从 Redis checkpointer 读取
+            if self.checkpointer is not None:
+                cfg = {"configurable": {"thread_id": session_id}}
+                checkpoint_tuple = await self.checkpointer.aget_tuple(cfg)
+                if checkpoint_tuple:
+                    checkpoint_data = checkpoint_tuple.checkpoint
+                    messages = checkpoint_data.get("channel_values", {}).get("messages", [])
+                    source = "redis"
 
-            # 获取该 thread 的最新检查点
-            checkpoint_tuple = await self.checkpointer.aget_tuple(cfg)
+            # 2. Redis 无数据时，从 MySQL 加载
+            if not messages and config.conversation_history_enabled:
+                messages = await conversation_history_service.load_messages(session_id)
+                if messages:
+                    source = "mysql"
+                    logger.info(
+                        f"[会话 {session_id}] Redis 无数据，从 MySQL 加载了 {len(messages)} 条历史"
+                    )
 
-            if not checkpoint_tuple:
+            if not messages:
                 logger.info(f"获取会话历史: {session_id}, 消息数量: 0")
                 return []
-
-            # 从 checkpoint 中提取消息
-            checkpoint_data = checkpoint_tuple.checkpoint
-            messages = checkpoint_data.get("channel_values", {}).get("messages", [])
 
             # 转换为前端需要的格式
             history = []
@@ -382,7 +517,6 @@ class RagAgentService:
                     continue
 
                 # 识别摘要消息（由 SummarizationMiddleware 注入）
-                # 摘要消息以 role="summary" 返回，前端可据此区分展示
                 if (
                     isinstance(msg, HumanMessage)
                     and getattr(msg, 'additional_kwargs', {}).get('lc_source') == 'summarization'
@@ -408,7 +542,9 @@ class RagAgentService:
                         "timestamp": datetime.now().isoformat()
                     })
 
-            logger.info(f"获取会话历史: {session_id}, 消息数量: {len(history)}")
+            logger.info(
+                f"获取会话历史: {session_id}, 消息数量: {len(history)}, 来源: {source}"
+            )
             return history
 
         except Exception as e:
@@ -417,7 +553,7 @@ class RagAgentService:
 
     async def clear_session(self, session_id: str) -> bool:
         """
-        清空会话历史（从 Redis checkpointer 中删除）
+        清空会话历史（同时删除 Redis checkpoint 和 MySQL 对话历史）
 
         Args:
             session_id: 会话ID（即 thread_id）
@@ -426,12 +562,15 @@ class RagAgentService:
             bool: 是否成功
         """
         try:
-            if self.checkpointer is None:
-                logger.warning("Checkpointer 未初始化")
-                return False
+            # 1. 删除 Redis checkpoint
+            if self.checkpointer is not None:
+                await self.checkpointer.adelete_thread(session_id)
+                logger.info(f"已清除 Redis checkpoint: {session_id}")
 
-            # 使用 checkpointer 的 adelete_thread 方法删除该 thread 的所有检查点
-            await self.checkpointer.adelete_thread(session_id)
+            # 2. 删除 MySQL 对话历史
+            if config.conversation_history_enabled:
+                await conversation_history_service.delete_session(session_id)
+                logger.info(f"已清除 MySQL 对话历史: {session_id}")
 
             logger.info(f"已清除会话历史: {session_id}")
             return True

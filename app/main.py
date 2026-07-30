@@ -12,13 +12,16 @@ import os
 
 from app.config import config
 from loguru import logger
-from app.api import chat, health, file, aiops, auth
+from app.api import chat, health, file, aiops, auth, sessions
 from app.core.milvus_client import milvus_manager
 from app.core.redis_client import redis_manager
 from app.core.mysql_client import mysql_manager
 from app.services.scheduler_service import scheduled_aiops_service
 from app.services.long_term_memory_service import long_term_memory_service
 from app.services.auth_service import auth_service
+from app.services.conversation_history_service import conversation_history_service
+from app.services.message_queue_service import message_queue_service
+from app.services.conversation_session_service import conversation_session_service
 
 
 @asynccontextmanager
@@ -51,6 +54,22 @@ async def lifespan(app: FastAPI):
     await long_term_memory_service.init_db()
     logger.info("✅ 长期记忆数据库表初始化完成")
 
+    # 初始化对话历史表（MySQL 持久化备份）
+    if config.conversation_history_enabled:
+        logger.info("💬 正在初始化对话历史表...")
+        await conversation_history_service.init_db()
+        logger.info("✅ 对话历史表初始化完成")
+
+        # 启动消息队列消费者（异步持久化对话历史）
+        logger.info("📨 正在启动消息队列消费者...")
+        await message_queue_service.start_consumer()
+        logger.info("✅ 消息队列消费者已启动")
+
+    # 初始化会话管理表
+    logger.info("📝 正在初始化会话管理表...")
+    await conversation_session_service.init_db()
+    logger.info("✅ 会话管理表初始化完成")
+
     # 初始化用户认证表并创建初始管理员
     logger.info("🔐 正在初始化用户认证系统...")
     await auth_service.init_db()
@@ -66,6 +85,13 @@ async def lifespan(app: FastAPI):
 
     # 关闭时执行
     await scheduled_aiops_service.stop()
+
+    # 停止消息队列消费者（优雅关闭，处理剩余消息）
+    if config.conversation_history_enabled:
+        logger.info("📨 正在停止消息队列消费者...")
+        await message_queue_service.stop_consumer()
+        logger.info("✅ 消息队列消费者已停止")
+
     logger.info("🔌 正在关闭连接...")
     milvus_manager.close()
     await redis_manager.close()
@@ -93,8 +119,9 @@ app.add_middleware(
 # 注册路由
 app.include_router(health.router, tags=["健康检查"])
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
-app.include_router(chat.router, prefix="/api", tags=["对话"])
-app.include_router(file.router, prefix="/api", tags=["文件管理"])
+app.include_router(chat.router, prefix="/api/chat", tags=["对话"])
+app.include_router(sessions.router, prefix="/api", tags=["会话管理"])
+app.include_router(file.router, prefix="/api/file", tags=["文件管理"])
 app.include_router(aiops.router, prefix="/api", tags=["AIOps智能运维"])
 
 # 挂载静态文件

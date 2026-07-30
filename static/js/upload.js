@@ -54,7 +54,7 @@ function createUploadModule(app) {
                 const accessToken = authManager.getAccessToken();
 
                 // 发送上传请求
-                const response = await fetch(`${app.apiBaseUrl}/upload`, {
+                const response = await fetch(`${app.apiBaseUrl}/file/upload`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${accessToken}`

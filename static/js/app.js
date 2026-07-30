@@ -25,7 +25,7 @@ class OnCallAgentApp {
         
         this.apiBaseUrl = 'http://localhost:9999/api';
         this.currentMode = 'quick'; // 'quick' 或 'stream'
-        this.sessionId = this.generateSessionId();
+        this.sessionId = null; // 由后端生成
         this.isStreaming = false;
 
         // 混入功能模块（所有模块方法合并到 this，调用方式不变）
@@ -36,6 +36,7 @@ class OnCallAgentApp {
         Object.assign(this, createUploadModule(this));
         Object.assign(this, createChatModule(this));
         Object.assign(this, createAIOpsModule(this));
+        Object.assign(this, createSessionModule(this));
 
         this.initializeElements();
         this.initTheme();
@@ -48,6 +49,9 @@ class OnCallAgentApp {
         
         // 显示用户信息
         this.updateUserInfo();
+        
+        // 初始化会话模块
+        this.initSessionModule();
     }
     
     // 更新用户信息显示
@@ -331,8 +335,8 @@ class OnCallAgentApp {
             this.chatMessages.innerHTML = '';
         }
 
-        // 生成新的会话ID
-        this.sessionId = this.generateSessionId();
+        // 重置 sessionId 为 null（由后端生成）
+        this.sessionId = null;
 
         // 重置模式为快速
         this.currentMode = 'quick';
@@ -343,6 +347,11 @@ class OnCallAgentApp {
 
         // 关闭移动端侧边栏
         this.closeMobileSidebar();
+        
+        // 通知会话模块新建对话
+        if (typeof this.onNewChat === 'function') {
+            this.onNewChat();
+        }
     }
     
     // 切换模式下拉菜单
@@ -415,11 +424,6 @@ class OnCallAgentApp {
             this.messageInput.disabled = this.isStreaming;
             this.messageInput.placeholder = '问问智能OnCall助手';
         }
-    }
-
-    // 生成随机会话ID
-    generateSessionId() {
-        return 'session_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
     }
 
     // HTML转义
