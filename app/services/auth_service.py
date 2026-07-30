@@ -304,31 +304,6 @@ class AuthService:
         exists = await redis_client.exists(token_key)
         return exists > 0
 
-    async def revoke_access_token(self, access_token: str) -> bool:
-        """
-        吊销单个 Access Token（从 Redis 中删除）
-
-        Args:
-            access_token: JWT Access Token 字符串
-
-        Returns:
-            bool: 是否成功吊销
-        """
-        redis_client = await redis_manager.get_client()
-        token_key = f"access_token:{access_token}"
-
-        # 先获取 user_id 以便清理集合索引
-        user_id_str = await redis_client.get(token_key)
-        deleted = await redis_client.delete(token_key)
-
-        if user_id_str:
-            user_set_key = f"user_access_tokens:{user_id_str}"
-            await redis_client.srem(user_set_key, access_token)
-
-        if deleted:
-            logger.info(f"已吊销 access_token: {access_token[:16]}...")
-        return deleted > 0
-
     async def revoke_all_user_access_tokens(self, user_id: int) -> int:
         """
         吊销某用户的所有 Access Token（密码修改、账户禁用、登出时使用）
@@ -342,16 +317,25 @@ class AuthService:
         redis_client = await redis_manager.get_client()
         user_set_key = f"user_access_tokens:{user_id}"
 
+        logger.debug(f"[revoke_access] 开始清理用户 {user_id} 的 access_token，集合键: {user_set_key}")
+
         # 获取该用户所有已缓存的 access_token
         tokens = await redis_client.smembers(user_set_key)
+        logger.debug(f"[revoke_access] smembers 返回: {tokens} (类型: {type(tokens).__name__})")
+
         if not tokens:
+            logger.warning(f"[revoke_access] 用户 {user_id} 的 access_token 集合为空，无 token 可清理")
             return 0
 
         # 批量删除 token 缓存键
         token_keys = [f"access_token:{t}" for t in tokens]
+        logger.debug(f"[revoke_access] 待删除的 token 键: {token_keys}")
         deleted = await redis_client.delete(*token_keys)
+        logger.debug(f"[revoke_access] 删除 token 键结果: deleted={deleted}")
+
         # 删除用户 token 集合
-        await redis_client.delete(user_set_key)
+        set_deleted = await redis_client.delete(user_set_key)
+        logger.debug(f"[revoke_access] 删除集合键 {user_set_key} 结果: {set_deleted}")
 
         logger.info(f"已吊销用户 {user_id} 的所有 access_token，共 {deleted} 个")
         return deleted
@@ -370,9 +354,12 @@ class AuthService:
         """
         redis_client = await redis_manager.get_client()
         key = f"refresh_token:{refresh_token}"
+        user_set_key = f"user_refresh_tokens:{user_id}"
         ttl = timedelta(days=config.refresh_token_expire_days)
 
         await redis_client.set(key, str(user_id), ex=ttl)
+        # 同时记录到用户级集合，便于登出时批量清理
+        await redis_client.sadd(user_set_key, refresh_token)
         logger.debug(f"存储 refresh_token: user_id={user_id}, ttl={ttl}")
 
     async def verify_refresh_token(self, refresh_token: str) -> Optional[int]:
@@ -395,23 +382,56 @@ class AuthService:
 
         return int(user_id_str)
 
-    async def revoke_refresh_token(self, refresh_token: str) -> bool:
+    async def revoke_all_user_refresh_tokens(self, user_id: int) -> int:
         """
-        吊销 Refresh Token（登出）
+        吊销某用户的所有 Refresh Token
 
         Args:
-            refresh_token: Refresh Token
+            user_id: 用户 ID
 
         Returns:
-            bool: 是否成功吊销
+            int: 成功吊销的 token 数量
         """
         redis_client = await redis_manager.get_client()
-        key = f"refresh_token:{refresh_token}"
-        deleted = await redis_client.delete(key)
+        user_set_key = f"user_refresh_tokens:{user_id}"
 
-        if deleted:
-            logger.info(f"已吊销 refresh_token: {refresh_token[:8]}...")
-        return deleted > 0
+        logger.debug(f"[revoke_refresh] 开始清理用户 {user_id} 的 refresh_token，集合键: {user_set_key}")
+
+        # 获取该用户所有已缓存的 refresh_token
+        tokens = await redis_client.smembers(user_set_key)
+        logger.debug(f"[revoke_refresh] smembers 返回: {tokens} (类型: {type(tokens).__name__})")
+
+        if not tokens:
+            logger.warning(f"[revoke_refresh] 用户 {user_id} 的 refresh_token 集合为空，无 token 可清理")
+            return 0
+
+        # 批量删除 refresh_token 缓存键
+        token_keys = [f"refresh_token:{t}" for t in tokens]
+        logger.debug(f"[revoke_refresh] 待删除的 token 键: {token_keys}")
+        deleted = await redis_client.delete(*token_keys)
+        logger.debug(f"[revoke_refresh] 删除 token 键结果: deleted={deleted}")
+
+        # 删除用户 token 集合
+        set_deleted = await redis_client.delete(user_set_key)
+        logger.debug(f"[revoke_refresh] 删除集合键 {user_set_key} 结果: {set_deleted}")
+
+        logger.info(f"已吊销用户 {user_id} 的所有 refresh_token，共 {deleted} 个")
+        return deleted
+
+    async def revoke_all_user_tokens(self, user_id: int) -> None:
+        """
+        吊销某用户的所有 Token（Access Token + Refresh Token），用于登出时彻底清理
+
+        Args:
+            user_id: 用户 ID
+        """
+        logger.info(f"[revoke_all] 开始清空用户 {user_id} 的所有 token")
+        access_count = await self.revoke_all_user_access_tokens(user_id)
+        refresh_count = await self.revoke_all_user_refresh_tokens(user_id)
+        logger.info(
+            f"[revoke_all] 已清空用户 {user_id} 的所有 token："
+            f"access_token={access_count} 个, refresh_token={refresh_count} 个"
+        )
 
 
 # 全局单例

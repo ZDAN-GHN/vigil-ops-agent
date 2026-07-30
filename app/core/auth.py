@@ -8,13 +8,13 @@ from typing import Optional
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from loguru import logger
 
 from app.config import config
 
-# Bearer Token 提取
+# Bearer Token 提取（保留用于兼容）
 security = HTTPBearer()
 
 
@@ -122,13 +122,18 @@ def verify_access_token(token: str) -> Optional[dict]:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
+    access_token: str | None = Cookie(default=None, alias=config.access_token_cookie_name),
 ) -> "User":
     """
-    FastAPI 依赖注入：从 Authorization header 中提取并验证 JWT，返回当前用户
+    FastAPI 依赖注入：从 HttpOnly Cookie 中提取并验证 JWT，返回当前用户
+
+    优先从 Cookie 读取 access_token（HttpOnly，JS 不可读），
+    若 Cookie 中不存在则回退到 Authorization header（兼容 API 客户端）。
 
     Args:
-        credentials: HTTP Bearer 凭证
+        request: FastAPI 请求对象
+        access_token: 从 Cookie 中读取的 access_token
 
     Returns:
         User: 当前登录的用户对象
@@ -138,7 +143,20 @@ async def get_current_user(
     """
     from app.services.auth_service import auth_service
 
-    token = credentials.credentials
+    # 优先从 Cookie 读取，回退到 Authorization header
+    token = access_token
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未提供认证令牌，请重新登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     payload = verify_access_token(token)
 
     if payload is None:
@@ -185,6 +203,52 @@ async def get_current_user(
         )
 
     return user
+
+
+def set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+    """
+    在响应中设置 HttpOnly Cookie
+
+    Args:
+        response: FastAPI 响应对象
+        access_token: JWT access token
+        refresh_token: UUID refresh token
+    """
+    response.set_cookie(
+        key=config.access_token_cookie_name,
+        value=access_token,
+        max_age=config.cookie_max_age_access,
+        httponly=config.cookie_httponly,
+        secure=config.cookie_secure,
+        samesite=config.cookie_samesite,
+        path="/",
+    )
+    response.set_cookie(
+        key=config.refresh_token_cookie_name,
+        value=refresh_token,
+        max_age=config.cookie_max_age_refresh,
+        httponly=config.cookie_httponly,
+        secure=config.cookie_secure,
+        samesite=config.cookie_samesite,
+        path="/api/auth/refresh",  # 仅刷新接口可用，限制作用域
+    )
+
+
+def clear_auth_cookies(response: Response) -> None:
+    """
+    在响应中清除认证 Cookie
+
+    Args:
+        response: FastAPI 响应对象
+    """
+    response.delete_cookie(
+        key=config.access_token_cookie_name,
+        path="/",
+    )
+    response.delete_cookie(
+        key=config.refresh_token_cookie_name,
+        path="/api/auth/refresh",
+    )
 
 
 # 类型提示用（避免循环导入）

@@ -3,16 +3,21 @@
 提供用户登录、登出、令牌刷新、用户管理等接口。
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from loguru import logger
 
-from app.core.auth import create_access_token, create_refresh_token, get_current_user, security
+from app.config import config
+from app.core.auth import (
+    clear_auth_cookies,
+    create_access_token,
+    create_refresh_token,
+    get_current_user,
+    set_auth_cookies,
+    verify_access_token,
+)
 from app.models.auth_schema import (
     LoginRequest,
     LoginResponse,
-    RefreshRequest,
-    TokenResponse,
     UserCreateRequest,
     UserInfoResponse,
     UserListResponse,
@@ -25,16 +30,17 @@ router = APIRouter()
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(request: LoginRequest):
+async def login(request: LoginRequest, response: Response):
     """用户登录
 
-    使用用户名和密码登录，返回 access_token 和 refresh_token。
+    使用用户名和密码登录，通过 HttpOnly Cookie 返回 access_token 和 refresh_token。
 
     Args:
         request: 登录请求
+        response: FastAPI 响应对象（用于设置 Cookie）
 
     Returns:
-        LoginResponse: 包含令牌和用户信息
+        LoginResponse: 包含用户信息（token 通过 Cookie 传递）
 
     Raises:
         HTTPException: 登录失败时抛出 401
@@ -52,10 +58,12 @@ async def login(request: LoginRequest):
     access_token = create_access_token(user.id, user.username)
     refresh_token = create_refresh_token()
 
-    # 存储 refresh_token 到 Redis
+    # 存储到 Redis
     await auth_service.store_refresh_token(refresh_token, user.id)
-    # 存储 access_token 到 Redis（用于免登录校验和服务端主动吊销）
     await auth_service.store_access_token(access_token, user.id)
+
+    # 设置 HttpOnly Cookie
+    set_auth_cookies(response, access_token, refresh_token)
 
     logger.info(f"用户登录成功: {user.username}")
 
@@ -67,22 +75,33 @@ async def login(request: LoginRequest):
     )
 
 
-@router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(request: RefreshRequest):
+@router.post("/refresh")
+async def refresh_token(
+    response: Response,
+    refresh_token: str | None = Cookie(default=None, alias=config.refresh_token_cookie_name),
+):
     """刷新 Access Token
 
-    使用 refresh_token 获取新的 access_token。
+    从 HttpOnly Cookie 中读取 refresh_token，签发新的 access_token 并通过 Cookie 返回。
 
     Args:
-        request: 刷新请求
+        response: FastAPI 响应对象
+        refresh_token: 从 Cookie 中读取的 refresh_token
 
     Returns:
-        TokenResponse: 新的 access_token
+        dict: 刷新结果
 
     Raises:
         HTTPException: 刷新失败时抛出 401
     """
-    user_id = await auth_service.verify_refresh_token(request.refresh_token)
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的刷新令牌",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id = await auth_service.verify_refresh_token(refresh_token)
 
     if user_id is None:
         raise HTTPException(
@@ -105,44 +124,64 @@ async def refresh_token(request: RefreshRequest):
     # 存储新 access_token 到 Redis
     await auth_service.store_access_token(new_access_token, user.id)
 
-    return TokenResponse(
-        access_token=new_access_token,
-        token_type="bearer",
+    # 更新 access_token Cookie（refresh_token 不变，无需重新设置）
+    response.set_cookie(
+        key=config.access_token_cookie_name,
+        value=new_access_token,
+        max_age=config.cookie_max_age_access,
+        httponly=config.cookie_httponly,
+        secure=config.cookie_secure,
+        samesite=config.cookie_samesite,
+        path="/",
     )
+
+    logger.debug(f"已刷新 access_token: user_id={user_id}")
+    return {"message": "token 已刷新"}
 
 
 @router.post("/logout")
 async def logout(
-    request: RefreshRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    response: Response,
+    access_token: str | None = Cookie(default=None, alias=config.access_token_cookie_name),
 ):
     """用户登出
 
-    同时吊销 refresh_token 和 access_token，立即失效。
+    清空该用户在 Redis 中的所有 token 信息（Access Token + Refresh Token），立即失效，
+    并清除浏览器中的认证 Cookie。
 
     Args:
-        request: 登出请求（包含 refresh_token）
-        credentials: HTTP Bearer 凭证（access_token）
+        response: FastAPI 响应对象
+        access_token: 从 Cookie 中读取的 access_token
 
     Returns:
         dict: 登出结果
     """
-    # 吊销 refresh_token
-    refresh_success = await auth_service.revoke_refresh_token(request.refresh_token)
-
-    # 吊销当前 access_token
-    access_token = credentials.credentials
-    await auth_service.revoke_access_token(access_token)
-
-    if refresh_success:
-        logger.info("用户登出成功")
+    if not access_token:
+        logger.warning("[logout] Cookie 中无 access_token")
+        # 即使没有 token，也清除 Cookie（确保浏览器干净）
+        clear_auth_cookies(response)
         return {"message": "登出成功"}
-    else:
-        logger.warning("登出失败: refresh_token 无效")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="无效的刷新令牌",
-        )
+
+    logger.debug(f"[logout] 收到登出请求，access_token 前16位: {access_token[:16]}...")
+
+    # 从 access_token 中解析 user_id，用于批量清理该用户的所有 token
+    payload = verify_access_token(access_token)
+    if payload is None:
+        logger.warning("[logout] access_token 解析失败，仅清除 Cookie")
+        clear_auth_cookies(response)
+        return {"message": "登出成功"}
+
+    user_id = int(payload["sub"])
+    logger.debug(f"[logout] 从 JWT 解析出 user_id={user_id}, username={payload.get('username')}")
+
+    # 批量清空该用户在 Redis 中的所有 token（Access Token + Refresh Token）
+    await auth_service.revoke_all_user_tokens(user_id)
+
+    # 清除浏览器中的认证 Cookie
+    clear_auth_cookies(response)
+
+    logger.info(f"用户登出成功，已清空所有 token (user_id={user_id})")
+    return {"message": "登出成功"}
 
 
 @router.get("/me", response_model=UserInfoResponse)

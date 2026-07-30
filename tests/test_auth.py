@@ -17,6 +17,8 @@ from app.core.auth import (
     create_refresh_token,
     verify_access_token,
     get_current_user,
+    set_auth_cookies,
+    clear_auth_cookies,
 )
 
 
@@ -266,11 +268,16 @@ class TestAuthService:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value="1")
             mock_client.set = AsyncMock()
+            mock_client.sadd = AsyncMock()
             mock_redis.get_client = AsyncMock(return_value=mock_client)
 
             # 存储
             await service.store_refresh_token("test-uuid", user_id=1)
             mock_client.set.assert_called_once()
+            # 验证同时写入了用户级集合索引
+            mock_client.sadd.assert_called_once_with(
+                "user_refresh_tokens:1", "test-uuid"
+            )
 
             # 验证
             result = await service.verify_refresh_token("test-uuid")
@@ -290,22 +297,6 @@ class TestAuthService:
 
             result = await service.verify_refresh_token("invalid-uuid")
             assert result is None
-
-    @pytest.mark.asyncio
-    async def test_revoke_refresh_token(self):
-        """吊销 refresh_token 应删除 Redis 中的记录"""
-        from app.services.auth_service import AuthService
-
-        service = AuthService()
-
-        with patch("app.services.auth_service.redis_manager") as mock_redis:
-            mock_client = AsyncMock()
-            mock_client.delete = AsyncMock(return_value=1)
-            mock_redis.get_client = AsyncMock(return_value=mock_client)
-
-            result = await service.revoke_refresh_token("test-uuid")
-            assert result is True
-            mock_client.delete.assert_called_once_with("refresh_token:test-uuid")
 
     # ========== Access Token 缓存管理测试 ==========
 
@@ -368,30 +359,6 @@ class TestAuthService:
             assert result is False
 
     @pytest.mark.asyncio
-    async def test_revoke_access_token(self):
-        """revoke_access_token 应删除 Redis 缓存键和集合索引"""
-        from app.services.auth_service import AuthService
-
-        service = AuthService()
-
-        with patch("app.services.auth_service.redis_manager") as mock_redis:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value="42")
-            mock_client.delete = AsyncMock(return_value=1)
-            mock_client.srem = AsyncMock()
-            mock_redis.get_client = AsyncMock(return_value=mock_client)
-
-            result = await service.revoke_access_token("jwt-token-abc")
-            assert result is True
-
-            # 验证删除了 token 缓存键
-            mock_client.delete.assert_called_once_with("access_token:jwt-token-abc")
-            # 验证从用户集合中移除
-            mock_client.srem.assert_called_once_with(
-                "user_access_tokens:42", "jwt-token-abc"
-            )
-
-    @pytest.mark.asyncio
     async def test_revoke_all_user_access_tokens(self):
         """revoke_all_user_access_tokens 应批量删除用户所有 token"""
         from app.services.auth_service import AuthService
@@ -432,23 +399,102 @@ class TestAuthService:
             result = await service.revoke_all_user_access_tokens(user_id=999)
             assert result == 0
 
+    # ========== Refresh Token 批量吊销测试 ==========
 
-# ========== get_current_user 依赖测试 ==========
+    @pytest.mark.asyncio
+    async def test_revoke_all_user_refresh_tokens(self):
+        """revoke_all_user_refresh_tokens 应批量删除用户所有 refresh_token"""
+        from app.services.auth_service import AuthService
+
+        service = AuthService()
+
+        with patch("app.services.auth_service.redis_manager") as mock_redis:
+            mock_client = AsyncMock()
+            mock_client.smembers = AsyncMock(
+                return_value={"uuid-a", "uuid-b", "uuid-c"}
+            )
+            mock_client.delete = AsyncMock(return_value=4)  # 3 个 token + 1 个集合
+            mock_redis.get_client = AsyncMock(return_value=mock_client)
+
+            result = await service.revoke_all_user_refresh_tokens(user_id=42)
+            assert result == 4
+
+            # 验证批量删除了 refresh_token 缓存键
+            delete_call_args = mock_client.delete.call_args_list[0]
+            assert "refresh_token:uuid-a" in delete_call_args[0]
+            assert "refresh_token:uuid-b" in delete_call_args[0]
+            assert "refresh_token:uuid-c" in delete_call_args[0]
+            # 验证删除了用户集合
+            mock_client.delete.assert_any_call("user_refresh_tokens:42")
+
+    @pytest.mark.asyncio
+    async def test_revoke_all_user_refresh_tokens_empty(self):
+        """用户无缓存 refresh_token 时应返回 0"""
+        from app.services.auth_service import AuthService
+
+        service = AuthService()
+
+        with patch("app.services.auth_service.redis_manager") as mock_redis:
+            mock_client = AsyncMock()
+            mock_client.smembers = AsyncMock(return_value=set())
+            mock_redis.get_client = AsyncMock(return_value=mock_client)
+
+            result = await service.revoke_all_user_refresh_tokens(user_id=999)
+            assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_revoke_all_user_tokens(self):
+        """revoke_all_user_tokens 应同时清空 access_token 和 refresh_token"""
+        from app.services.auth_service import AuthService
+
+        service = AuthService()
+
+        with patch.object(
+            service, "revoke_all_user_access_tokens", new_callable=AsyncMock
+        ) as mock_revoke_access, patch.object(
+            service, "revoke_all_user_refresh_tokens", new_callable=AsyncMock
+        ) as mock_revoke_refresh:
+            mock_revoke_access.return_value = 2
+            mock_revoke_refresh.return_value = 1
+
+            await service.revoke_all_user_tokens(user_id=42)
+
+            mock_revoke_access.assert_called_once_with(42)
+            mock_revoke_refresh.assert_called_once_with(42)
+
+
+# ========== get_current_user 依赖测试（Cookie 模式） ==========
+
+
+def _make_request(headers=None):
+    """构造模拟 Request 对象"""
+    request = MagicMock()
+    request.headers = headers or {}
+    return request
 
 
 class TestGetCurrentUser:
-    """get_current_user 依赖注入测试"""
+    """get_current_user 依赖注入测试（Cookie 优先，Header 回退）"""
+
+    @pytest.mark.asyncio
+    async def test_no_token_raises_401(self):
+        """Cookie 和 Header 均无 token 应抛出 401"""
+        from fastapi import HTTPException
+
+        request = _make_request()
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(request, access_token=None)
+        assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
     async def test_invalid_token_raises_401(self):
         """无效 token 应抛出 401"""
         from fastapi import HTTPException
 
+        request = _make_request()
         with patch("app.core.auth.verify_access_token", return_value=None):
             with pytest.raises(HTTPException) as exc_info:
-                mock_creds = MagicMock()
-                mock_creds.credentials = "invalid-token"
-                await get_current_user(mock_creds)
+                await get_current_user(request, access_token="invalid-token")
             assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -462,12 +508,11 @@ class TestGetCurrentUser:
         mock_auth.get_user_by_id = AsyncMock(return_value=None)
         mock_auth.verify_access_token_cached = AsyncMock(return_value=True)
 
+        request = _make_request()
         with patch.object(auth_module, "verify_access_token", return_value=payload):
             with patch("app.services.auth_service.auth_service", mock_auth):
                 with pytest.raises(HTTPException) as exc_info:
-                    mock_creds = MagicMock()
-                    mock_creds.credentials = "valid-token"
-                    await get_current_user(mock_creds)
+                    await get_current_user(request, access_token="valid-token")
                 assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -485,17 +530,16 @@ class TestGetCurrentUser:
         mock_auth.get_user_by_id = AsyncMock(return_value=mock_user)
         mock_auth.verify_access_token_cached = AsyncMock(return_value=True)
 
+        request = _make_request()
         with patch.object(auth_module, "verify_access_token", return_value=payload):
             with patch("app.services.auth_service.auth_service", mock_auth):
                 with pytest.raises(HTTPException) as exc_info:
-                    mock_creds = MagicMock()
-                    mock_creds.credentials = "valid-token"
-                    await get_current_user(mock_creds)
+                    await get_current_user(request, access_token="valid-token")
                 assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_valid_token_returns_user(self):
-        """有效 token 应返回用户对象"""
+    async def test_valid_cookie_token_returns_user(self):
+        """Cookie 中的有效 token 应返回用户对象"""
         import app.core.auth as auth_module
 
         mock_user = MagicMock()
@@ -508,17 +552,37 @@ class TestGetCurrentUser:
         mock_auth.get_user_by_id = AsyncMock(return_value=mock_user)
         mock_auth.verify_access_token_cached = AsyncMock(return_value=True)
 
+        request = _make_request()
         with patch.object(auth_module, "verify_access_token", return_value=payload):
             with patch("app.services.auth_service.auth_service", mock_auth):
-                mock_creds = MagicMock()
-                mock_creds.credentials = "valid-token"
-                result = await get_current_user(mock_creds)
+                result = await get_current_user(request, access_token="cookie-token")
                 assert result is mock_user
                 assert result.username == "testuser"
 
     @pytest.mark.asyncio
+    async def test_header_fallback_when_no_cookie(self):
+        """Cookie 为空时应回退到 Authorization header"""
+        import app.core.auth as auth_module
+
+        mock_user = MagicMock()
+        mock_user.id = 1
+        mock_user.username = "testuser"
+        mock_user.is_active = True
+        payload = {"sub": "1", "username": "testuser"}
+
+        mock_auth = MagicMock()
+        mock_auth.get_user_by_id = AsyncMock(return_value=mock_user)
+        mock_auth.verify_access_token_cached = AsyncMock(return_value=True)
+
+        request = _make_request(headers={"Authorization": "Bearer header-token"})
+        with patch.object(auth_module, "verify_access_token", return_value=payload):
+            with patch("app.services.auth_service.auth_service", mock_auth):
+                result = await get_current_user(request, access_token=None)
+                assert result is mock_user
+
+    @pytest.mark.asyncio
     async def test_token_not_in_redis_raises_401(self):
-        """Redis 中不存在的 token（已吊销/未缓存）应抛出 401"""
+        """Redis 中不存在的 token（已吊销）应抛出 401"""
         from fastapi import HTTPException
         import app.core.auth as auth_module
 
@@ -526,12 +590,11 @@ class TestGetCurrentUser:
         mock_auth = MagicMock()
         mock_auth.verify_access_token_cached = AsyncMock(return_value=False)
 
+        request = _make_request()
         with patch.object(auth_module, "verify_access_token", return_value=payload):
             with patch("app.services.auth_service.auth_service", mock_auth):
                 with pytest.raises(HTTPException) as exc_info:
-                    mock_creds = MagicMock()
-                    mock_creds.credentials = "revoked-token"
-                    await get_current_user(mock_creds)
+                    await get_current_user(request, access_token="revoked-token")
                 assert exc_info.value.status_code == 401
                 assert "已被吊销" in exc_info.value.detail
 
@@ -543,19 +606,59 @@ class TestGetCurrentUser:
 
         mock_user = MagicMock()
         mock_user.id = 1
-        mock_user.username = "new_username"  # 数据库中已修改
+        mock_user.username = "new_username"
         mock_user.is_active = True
-        payload = {"sub": "1", "username": "old_username"}  # JWT 中仍是旧名
+        payload = {"sub": "1", "username": "old_username"}
 
         mock_auth = MagicMock()
         mock_auth.get_user_by_id = AsyncMock(return_value=mock_user)
         mock_auth.verify_access_token_cached = AsyncMock(return_value=True)
 
+        request = _make_request()
         with patch.object(auth_module, "verify_access_token", return_value=payload):
             with patch("app.services.auth_service.auth_service", mock_auth):
                 with pytest.raises(HTTPException) as exc_info:
-                    mock_creds = MagicMock()
-                    mock_creds.credentials = "valid-token"
-                    await get_current_user(mock_creds)
+                    await get_current_user(request, access_token="valid-token")
                 assert exc_info.value.status_code == 401
                 assert "不一致" in exc_info.value.detail
+
+
+# ========== Cookie 工具函数测试 ==========
+
+
+class TestCookieHelpers:
+    """Cookie 设置/清除工具函数测试"""
+
+    def test_set_auth_cookies_sets_both_cookies(self):
+        """set_auth_cookies 应设置 access_token 和 refresh_token Cookie"""
+        response = MagicMock()
+        response.set_cookie = MagicMock()
+
+        set_auth_cookies(response, "jwt-access-xxx", "uuid-refresh-yyy")
+
+        assert response.set_cookie.call_count == 2
+
+        # 验证 access_token cookie
+        access_call = response.set_cookie.call_args_list[0]
+        assert access_call.kwargs["key"] == config.access_token_cookie_name
+        assert access_call.kwargs["value"] == "jwt-access-xxx"
+        assert access_call.kwargs["httponly"] is True
+        assert access_call.kwargs["samesite"] == config.cookie_samesite
+
+        # 验证 refresh_token cookie
+        refresh_call = response.set_cookie.call_args_list[1]
+        assert refresh_call.kwargs["key"] == config.refresh_token_cookie_name
+        assert refresh_call.kwargs["value"] == "uuid-refresh-yyy"
+        assert refresh_call.kwargs["httponly"] is True
+
+    def test_clear_auth_cookies_deletes_both_cookies(self):
+        """clear_auth_cookies 应清除 access_token 和 refresh_token Cookie"""
+        response = MagicMock()
+        response.delete_cookie = MagicMock()
+
+        clear_auth_cookies(response)
+
+        assert response.delete_cookie.call_count == 2
+        delete_keys = [call.kwargs["key"] for call in response.delete_cookie.call_args_list]
+        assert config.access_token_cookie_name in delete_keys
+        assert config.refresh_token_cookie_name in delete_keys

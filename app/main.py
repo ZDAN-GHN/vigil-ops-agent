@@ -107,10 +107,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# 配置 CORS
+# 配置 CORS（Cookie 模式下必须指定具体域名，不能用 "*"）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应该限制具体域名
+    allow_origins=[
+        f"http://localhost:{config.port}",
+        f"http://127.0.0.1:{config.port}",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

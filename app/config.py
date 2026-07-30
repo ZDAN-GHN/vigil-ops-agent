@@ -30,10 +30,10 @@ class Settings(BaseSettings):
 
     # DashScope 配置
     dashscope_api_key: str = "sk:dashscope_api_key"  # 默认空字符串，实际使用需从环境变量加载
-    dashscope_model: str = "qwen-max" # 对话模型
+    dashscope_model: str = "qwen-max"  # 对话模型
     dashscope_embedding_model: str = "text-embedding-v4"  # v4 支持多种维度（默认 1024）
-    dashscope_biz_space_api_base: str = "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1" # 业务空间的 api_base_url
-    dashscope_rerank_model: str = "qwen3-rerank" # rerank 重排模型
+    dashscope_biz_space_api_base: str = "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1"  # 业务空间的 api_base_url
+    dashscope_rerank_model: str = "qwen3-rerank"  # rerank 重排模型
 
     # Milvus 配置
     milvus_host: str = "localhost"
@@ -89,6 +89,15 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
     access_token_cache_ttl_seconds: int = 259200  # Access Token Redis 缓存 TTL，默认 3 天（秒）
+
+    # Cookie 配置（HttpOnly + Secure + SameSite=Strict）
+    access_token_cookie_name: str = "access_token"
+    refresh_token_cookie_name: str = "refresh_token"
+    cookie_secure: bool = False  # 生产环境 HTTPS 时设为 True
+    cookie_samesite: str = "strict"  # strict 防 CSRF
+    cookie_httponly: bool = True  # JS 无法读取
+    cookie_max_age_access: int = 1800  # 30 分钟（秒）接口访问 token 过期时间
+    cookie_max_age_refresh: int = 604800  # 7 天（秒）刷新“接口访问 token”的 token 过期时间
 
     # 初始管理员配置（首次启动时自动创建）
     initial_admin_username: str = "admin"

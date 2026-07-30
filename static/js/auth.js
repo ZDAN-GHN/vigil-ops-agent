@@ -1,21 +1,21 @@
 /**
  * 认证模块
- * 封装登录、token 管理、自动刷新等逻辑
+ * 基于 HttpOnly Cookie 的认证管理
+ *
+ * Token 由后端通过 Set-Cookie 设置，JS 无法读取（防 XSS）。
+ * 所有 fetch 请求需携带 credentials: 'include' 以自动附带 Cookie。
  */
 
 class AuthManager {
     constructor() {
         this.apiBaseUrl = '/api/auth';
         this.storageKeys = {
-            accessToken: 'access_token',
-            refreshToken: 'refresh_token',
             user: 'user_info',
-            tokenExpiry: 'token_expiry'
         };
-        
+
         // Token 刷新定时器
         this.refreshTimer = null;
-        
+
         // 初始化
         this.initTokenRefresh();
     }
@@ -33,6 +33,7 @@ class AuthManager {
                 headers: {
                     'Content-Type': 'application/json'
                 },
+                credentials: 'include',  // 接收 Set-Cookie
                 body: JSON.stringify({ username, password })
             });
 
@@ -42,18 +43,13 @@ class AuthManager {
             }
 
             const data = await response.json();
-            
-            // 存储 tokens
-            this.setTokens(data.access_token, data.refresh_token);
+
+            // 仅存储用户信息（token 由 Cookie 管理，JS 不可见）
             this.setUser(data.user);
-            
-            // 设置 token 过期时间（30分钟后）
-            const expiryTime = Date.now() + 30 * 60 * 1000;
-            localStorage.setItem(this.storageKeys.tokenExpiry, expiryTime.toString());
-            
+
             // 启动自动刷新
             this.initTokenRefresh();
-            
+
             return {
                 success: true,
                 user: data.user
@@ -71,69 +67,43 @@ class AuthManager {
      * 登出
      */
     async logout() {
-        const refreshToken = this.getRefreshToken();
-        
-        if (refreshToken) {
-            try {
-                await fetch(`${this.apiBaseUrl}/logout`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ refresh_token: refreshToken })
-                });
-            } catch (error) {
-                console.error('登出请求失败:', error);
-            }
+        try {
+            await fetch(`${this.apiBaseUrl}/logout`, {
+                method: 'POST',
+                credentials: 'include',  // 自动携带 Cookie
+            });
+        } catch (error) {
+            console.error('登出请求失败:', error);
         }
-        
-        // 清除本地存储
-        this.clearTokens();
+
+        // 清除本地用户信息
         this.clearUser();
-        
+
         // 清除刷新定时器
         if (this.refreshTimer) {
             clearTimeout(this.refreshTimer);
             this.refreshTimer = null;
         }
-        
+
         // 跳转到登录页
         window.location.href = '/login';
     }
 
     /**
      * 刷新 access token
+     * 后端从 HttpOnly Cookie 中读取 refresh_token，签发新 access_token 并设置 Cookie
      */
     async refreshToken() {
-        const refreshToken = this.getRefreshToken();
-        
-        if (!refreshToken) {
-            this.handleAuthError();
-            return false;
-        }
-
         try {
             const response = await fetch(`${this.apiBaseUrl}/refresh`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ refresh_token: refreshToken })
+                credentials: 'include',  // 自动携带 refresh_token Cookie
             });
 
             if (!response.ok) {
                 throw new Error('刷新 token 失败');
             }
 
-            const data = await response.json();
-            
-            // 更新 access token
-            localStorage.setItem(this.storageKeys.accessToken, data.access_token);
-            
-            // 更新过期时间
-            const expiryTime = Date.now() + 30 * 60 * 1000;
-            localStorage.setItem(this.storageKeys.tokenExpiry, expiryTime.toString());
-            
             return true;
         } catch (error) {
             console.error('刷新 token 失败:', error);
@@ -153,43 +123,12 @@ class AuthManager {
 
         // 每 25 分钟刷新一次（提前 5 分钟）
         const refreshInterval = 25 * 60 * 1000;
-        
+
         this.refreshTimer = setTimeout(() => {
             this.refreshToken().then(() => {
                 this.initTokenRefresh();
             });
         }, refreshInterval);
-    }
-
-    /**
-     * 获取 access token
-     */
-    getAccessToken() {
-        return localStorage.getItem(this.storageKeys.accessToken);
-    }
-
-    /**
-     * 获取 refresh token
-     */
-    getRefreshToken() {
-        return localStorage.getItem(this.storageKeys.refreshToken);
-    }
-
-    /**
-     * 设置 tokens
-     */
-    setTokens(accessToken, refreshToken) {
-        localStorage.setItem(this.storageKeys.accessToken, accessToken);
-        localStorage.setItem(this.storageKeys.refreshToken, refreshToken);
-    }
-
-    /**
-     * 清除 tokens
-     */
-    clearTokens() {
-        localStorage.removeItem(this.storageKeys.accessToken);
-        localStorage.removeItem(this.storageKeys.refreshToken);
-        localStorage.removeItem(this.storageKeys.tokenExpiry);
     }
 
     /**
@@ -223,21 +162,11 @@ class AuthManager {
 
     /**
      * 检查是否已登录
+     * Cookie 模式下，通过检查用户信息是否存在来判断
      */
     isLoggedIn() {
-        const accessToken = this.getAccessToken();
-        const expiryTime = localStorage.getItem(this.storageKeys.tokenExpiry);
-        
-        if (!accessToken || !expiryTime) {
-            return false;
-        }
-        
-        // 检查 token 是否过期
-        if (Date.now() > parseInt(expiryTime)) {
-            return false;
-        }
-        
-        return true;
+        const user = this.getUser();
+        return user !== null;
     }
 
     /**
@@ -255,24 +184,13 @@ class AuthManager {
      * 处理认证错误
      */
     handleAuthError() {
-        this.clearTokens();
         this.clearUser();
         window.location.href = '/login';
     }
 
     /**
-     * 获取带认证头的请求配置
-     */
-    getAuthHeaders() {
-        const accessToken = this.getAccessToken();
-        return {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-        };
-    }
-
-    /**
      * 发送带认证的请求
+     * Cookie 会自动携带，无需手动注入 Authorization header
      * @param {string} url - 请求 URL
      * @param {Object} options - fetch 选项
      */
@@ -283,28 +201,28 @@ class AuthManager {
             throw new Error('未登录');
         }
 
+        // 合并 headers，确保 Content-Type 存在
         const headers = {
-            ...this.getAuthHeaders(),
+            'Content-Type': 'application/json',
             ...options.headers
         };
 
         try {
             const response = await fetch(url, {
                 ...options,
-                headers
+                headers,
+                credentials: 'include',  // 自动携带 Cookie
             });
 
-            // 如果返回 401，尝试刷新 token
+            // 如果返回 401，尝试刷新 token 后重试
             if (response.status === 401) {
                 const refreshed = await this.refreshToken();
                 if (refreshed) {
                     // 重试请求
                     return fetch(url, {
                         ...options,
-                        headers: {
-                            ...this.getAuthHeaders(),
-                            ...options.headers
-                        }
+                        headers,
+                        credentials: 'include',
                     });
                 } else {
                     this.handleAuthError();

@@ -50,15 +50,10 @@ function createUploadModule(app) {
                 const formData = new FormData();
                 formData.append('file', file);
 
-                // 获取认证头
-                const accessToken = authManager.getAccessToken();
-
-                // 发送上传请求
+                // 发送上传请求（Cookie 自动携带）
                 const response = await fetch(`${app.apiBaseUrl}/file/upload`, {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`
-                    },
+                    credentials: 'include',
                     body: formData
                 });
 
