@@ -1,203 +1,111 @@
 # AGENTS.md
 
-该文件为在本仓库中进行代码工作的所有python开发者提供了指导
-
 ## 语言规范
 
-- 所有对话、解释、注释、文档必须使用**简体中文**。
-- 代码中的变量名、函数名、类名等标识符必须使用**英文**，遵循通用命名规范。
-- Commit Message 必须使用简体中文。
+- 对话、注释、文档使用**简体中文**；代码标识符使用**英文**。
+- Commit Message 使用简体中文。
+
+## 技术栈
+
+| 项 | 选择 |
+|----|------|
+| Python | `>=3.11,<3.14`（当前 3.13） |
+| 包管理 | **uv**（非 pip/poetry） |
+| Web 框架 | FastAPI + uvicorn |
+| Agent 框架 | LangGraph + langchain-qwq（ChatQwen 原生集成） |
+| 向量库 | Milvus（`langchain-milvus` + `pymilvus`） |
+| MCP | `langchain-mcp-adapters` + `fastmcp` |
+| 日志 | **Loguru**（`from loguru import logger`，非标准 logging） |
+| 数据库 | MySQL（`aiomysql` + `SQLAlchemy`）+ Redis（checkpoint + 消息队列） |
 
 ## 常用命令
 
-### 环境
-
-- Python 版本：`3.13`（见 `.python-version`），`pyproject.toml` 要求 `>=3.11,<3.14`
-- 包管理器：**uv**（非 pip/poetry）
-- 虚拟环境：`.venv/`（uv 管理）
-- 环境变量：`.env` 文件（DashScope API Key、Milvus 连接等）
-
-### 安装与启动
-
 ```bash
-# 安装依赖
-uv pip install -e .
-# 或安装开发依赖（pytest, ruff, black, mypy 等）
-uv pip install -e ".[dev]"
+# 环境初始化
+uv pip install -e .            # 安装依赖
+uv pip install -e ".[dev]"     # 安装开发依赖
+make init                      # 一键初始化（Docker Milvus + 服务 + 上传文档）
 
-# 一键初始化（Docker Milvus + 服务 + 上传文档）
-make init
+# 服务管理
+make start                     # 启动全部（MCP + FastAPI）
+make stop                      # 停止全部
+make dev                       # 开发模式（前台热重载）
+.\start-windows.bat            # Windows 启动
+.\stop-windows.bat             # Windows 停止
 
-# 启动所有服务（MCP + FastAPI）
-make start
+# 代码质量（PR 前必须通过）
+make format                    # ruff format + isort
+make lint                      # ruff check
+make test                      # pytest --cov
+make check-all                 # format + lint + test
 
-# 停止所有服务
-make stop
-
-# Windows 用户（无 make）
-.\start-windows.bat   # 启动
-.\stop-windows.bat    # 停止
+# 文档向量化
+make upload                    # 上传 aiops-docs/*.md 到 Milvus
 ```
 
-### 服务组成
+## 服务与端口
 
-启动后共有 **4 个进程**：
+| 服务 | 端口 | 入口 |
+|------|------|------|
+| FastAPI 主服务 | `9999` | `uvicorn app.main:app` |
+| CLS MCP 服务 | `8003` | `mcp_servers/cls_server.py` |
+| Monitor MCP 服务 | `8004` | `mcp_servers/monitor_server.py` |
+| Milvus 向量库 | `19530` | Docker `milvus-standalone` |
 
-| 服务             | 端口      | 说明                                            |
-| ---------------- | --------- | ----------------------------------------------- |
-| FastAPI 主服务   | `9999`  | `uvicorn app.main:app`，Web UI + API          |
-| CLS MCP 服务     | `8003`  | `mcp_servers/cls_server.py`，日志查询工具     |
-| Monitor MCP 服务 | `8004`  | `mcp_servers/monitor_server.py`，监控数据工具 |
-| Milvus 向量库    | `19530` | Docker 容器`milvus-standalone`                |
+## 架构要点
 
-### 开发模式
+分层：`api/`（路由薄层）→ `services/`（业务逻辑）→ `agent/`（LangGraph 节点 + MCP 客户端）→ `tools/`（工具）→ `models/`（Pydantic/ORM）→ `core/`（基础设施：LLM 工厂、DB 连接）→ `utils/`。
 
-```bash
-# 前台热重载开发
-make dev
+关键模式：
+- **全局服务单例**：`rag_agent_service`、`vector_store_manager` 等模块级实例，直接 `import` 使用。
+- **MCP 聚合**：`agent/mcp_client.py` 用 `MultiServerMCPClient` 连接多个 MCP 服务器，`retry_interceptor` 提供指数退避重试。
+- **SSE 流式**：`/api/chat/stream` 和 `/api/aiops` 通过 `sse-starlette` 返回 JSON 事件。
+- **三级消息兜底**：Redis List → 内存队列 → 兜底日志文件（`logs/mq_fallback.jsonl`）。
+- **Redis checkpoint + MySQL 备份**：短期记忆 Redis TTL=7天，过期自动从 MySQL 恢复。
 
-# 单独管理各服务
-make start-cls       # 启动 CLS MCP
-make start-monitor   # 启动 Monitor MCP
-make start-api       # 启动 FastAPI
-make status-mcp      # 查看 MCP 服务状态
-```
+两条核心路径：
+- **RAG 对话**：`chat.py` → `rag_agent_service` → LangGraph Agent → 工具调用（Milvus 检索 / MCP）→ SSE 流式 → 异步持久化 MySQL
+- **AIOps 诊断**：`aiops.py` → `aiops_service` → Plan-Execute-Replan 循环 → SSE 流式
 
-### 代码质量
+## 禁止事项
 
-```bash
-make format          # ruff format + isort（line-length=100）
-make lint            # ruff check
-make fix             # ruff check --fix + format
-make type-check      # mypy app/ --ignore-missing-imports
-make test            # pytest tests/ --cov=app
-make test-quick      # pytest tests/ -v（无覆盖率）
-make check-all       # format + lint + test
-```
+- **不要**直接修改 `core/redis_checkpointer.py`、`core/milvus_client.py`、`core/mysql_client.py`，除非明确要求。
+- **不要**修改 MCP 服务器接口（`mcp_servers/`）而不通知。
+- **不要**使用 `pip install`，始终使用 `uv pip install`。
+- **不要**使用标准 `logging`，始终使用 `from loguru import logger`。
+- **不要**硬编码环境变量，所有配置通过 `config.py`（Pydantic Settings）从 `.env` 加载。
+- **不要**在 `app/` 下创建新的顶层包，除非讨论过。
 
-### 文档管理
+## 易踩坑
 
-```bash
-make upload          # 上传 aiops-docs/*.md 到向量库
-make list-docs       # 列出可上传文档
-```
+- `DASHSCOPE_API_BASE` 必须为 `https://dashscope.aliyuncs.com/compatible-mode/v1`，否则默认访问新加坡站点导致鉴权失败。
+- `langchain-qwq` 是 ChatQwen 原生集成，非通用 OpenAI 兼容适配器，不要混用 `ChatOpenAI`。
+- 虚拟环境在 `.venv/`，由 uv 管理，不要手动创建或激活其他虚拟环境。
+- `RERANK_ENABLED` 默认 `False`，启用 Rerank 需要同时在 `.env` 中配置。
+- 认证模块：`core/auth.py`（JWT 令牌处理）+ `services/auth_service.py`（业务逻辑）+ `api/auth.py`（路由），修改时需三层联动。
 
-### 预提交
+## 模块约束
 
-```bash
-make pre-commit-install   # 安装 hooks（isort + black + ruff + bandit + docformatter + commitizen）
-make pre-commit           # 手动运行所有 hooks
-```
+- 单模块目标 **< 500 行**（不含测试）。超过约 800 行应拆分。
+- `services/` 中新增服务时，保持单一职责，一个文件对应一个领域。
+- 新增 Agent 工具放在 `tools/`，遵循 `knowledge_tool.py` 的签名模式。
 
-## 架构总览
+## 完成标准
 
-```
-app/
-├── main.py            # FastAPI 入口，lifespan 管理 Milvus 连接
-├── config.py          # Pydantic Settings，从 .env 加载配置
-├── api/               # 路由层 —— 薄层，只做请求/响应转换
-│   ├── chat.py        # /api/chat, /api/chat_stream (SSE), /api/chat/clear
-│   ├── aiops.py       # /api/aiops (SSE 流式诊断)
-│   ├── sessions.py      # /api/sessions (会话列表/创建/更新/删除)
-│   ├── file.py        # /api/upload (文档上传 → 向量化)
-│   └── health.py      # /health
-├── services/          # 业务逻辑层
-│   ├── rag_agent_service.py   # RAG Agent —— LangGraph ReAct 对话代理
-│   ├── aiops_service.py       # AIOps —— LangGraph Plan-Execute-Replan 工作流
-│   ├── conversation_session_service.py # 会话管理服务（CRUD + 软删除）
-│   ├── conversation_history_service.py # 对话历史持久化（MySQL + Redis 恢复）
-│   ├── message_queue_service.py # 消息队列服务（Redis List + 内存兜底）
-│   ├── long_term_memory_service.py # 长期记忆（用户画像）
-│   ├── vector_store_manager.py    # 数据层：Milvus VectorStore 封装（CRUD）
-│   ├── vector_embedding_service.py # Embedding 服务（DashScope text-embedding-v4）
-│   ├── vector_index_service.py    # 向量索引（写入 Milvus）
-│   ├── vector_search_service.py   # 检索编排层：粗排 + Rerank 精排
-│   ├── vector_rerank_service.py   # 精排层：DashScope Rerank API 封装
-│   └── document_splitter_service.py # 文档分块（RecursiveCharacterTextSplitter）
-├── agent/             # Agent 核心
-│   ├── mcp_client.py  # MultiServerMCPClient 全局单例 + 重试拦截器
-│   └── aiops/         # Plan-Execute-Replan 三节点
-│       ├── state.py       # PlanExecuteState (TypedDict)
-│       ├── planner.py     # 制定执行计划
-│       ├── executor.py    # 执行步骤（调用工具）
-│       └── replanner.py   # 评估结果 → continue / replan / respond
-├── tools/             # Agent 工具集
-│   ├── knowledge_tool.py  # 知识检索（从 Milvus 检索 → 返回上下文）
-│   └── time_tool.py       # 获取当前时间
-├── models/            # Pydantic 请求/响应模型
-│   ├── conversation_session.py # 会话管理表 ORM 模型
-│   ├── conversation_history.py # 对话历史表 ORM 模型
-│   └── user_profile.py  # 用户画像 + 对话摘要 ORM 模型
-├── core/              # 基础设施
-│   ├── llm_factory.py     # LLM 工厂（DashScope/ChatQwen 实例化）
-│   └── milvus_client.py   # Milvus 连接管理（单例）
-└── utils/
-    └── logger.py      # Loguru 日志配置（控制台 + 按天轮转文件）
-```
+修改代码后，满足以下条件才算完成：
 
-### 两条核心数据流
+1. `make format && make lint` 无错误
+2. `make test` 全部通过（新增功能需补充测试）
+3. 新增 API 端点必须在 `models/` 中有对应的请求/响应模型
+4. 新增环境变量必须在 `config.py` 中声明并设置合理默认值
+5. 日志使用 `logger`（Loguru），不使用 `print`
 
-**1. RAG 对话（`/api/chat_stream`）**
+## 验证命令
 
-```
-用户请求 → chat.py → rag_agent_service.query_stream()
-  → _ensure_checkpoint_restored()
-    → Redis 有 checkpoint → 直接使用
-    → Redis 无 checkpoint → 从 MySQL 加载 → 写回 Redis (TTL=7天)
-  → LangGraph Agent（ChatQwen + MemorySaver）
-    → trim_messages_middleware 修剪历史（保留系统消息 + 最近 6 条）
-    → Agent 决定是否调用工具：
-       - retrieve_knowledge → vector_search_service → vector_store_manager (粗排)
-                                                       → vector_rerank_service (精排)
-       - MCP 工具（cls/monitor）→ mcp_client
-    → 流式输出 SSE 事件：tool_call / content / done / error
-  → _sync_to_mysql()
-    → 消息序列化 → 推入消息队列（Redis List / 内存兜底）
-    → 后台消费者协程异步消费 → 写入 MySQL
-```
-
-**2. AIOps 诊断（`/api/aiops`）**
-
-```
-用户请求 → aiops.py → aiops_service.run()
-  → LangGraph StateGraph(PlanExecuteState)
-    → Planner：分析任务，生成步骤列表（Plan pydantic model）
-    → Executor：取 plan[0]，用 ToolNode 执行（本地工具 + MCP 工具）
-    → Replanner：评估结果 → Action(continue/replan/respond)
-    → 条件边：有 response → END，有剩余 plan → Executor，否则 → END
-  → 流式输出诊断过程 + 最终报告
-```
-
-### 关键设计模式
-
-- **LangGraph StateGraph + MemorySaver**：对话和 AIOps 都使用 checkpointer 实现会话记忆，通过 `thread_id` 区分会话。
-- **全局服务单例**：`rag_agent_service`、`vector_store_manager`、`milvus_manager` 等模块级实例，在 `services/` 和 `core/` 中直接导入使用。
-- **MCP 工具聚合**：`mcp_client.py` 用 `MultiServerMCPClient` 连接多个 MCP 服务器，`retry_interceptor` 提供指数退避重试。
-- **SSE 流式协议**：`/api/chat_stream` 和 `/api/aiops` 都通过 `sse-starlette` 返回，data 字段为 JSON（`type` 区分事件类型）。
-- **向量化管道**：文件上传 → `document_splitter_service` 分块 → `vector_embedding_service` embedding → `vector_index_service` 写入 Milvus collection `biz`。
-- **对话历史异步持久化**：对话完成后消息推入 Redis List 消息队列（失败降级到内存队列），后台消费者协程批量消费并写入 MySQL。三级兜底：Redis → 内存队列 → 兜底日志文件。
-- **Redis checkpoint + MySQL 备份**：短期记忆存储在 Redis（TTL 7 天），过期后自动从 MySQL 恢复到 Redis，保证对话上下文不丢失。
-- **会话管理**：`conversation_sessions` 表管理用户会话列表，支持软删除。对话时自动创建/更新会话记录，用户可查询自己的会话列表。
-
-### 配置文件
-
-- `config.py`：所有配置通过 Pydantic Settings 从 `.env` 加载，全局 `config` 单例
-- 关键环境变量：`DASHSCOPE_API_KEY`、`DASHSCOPE_API_BASE`、`MILVUS_HOST/PORT`、`RAG_TOP_K`、`CHUNK_MAX_SIZE/OVERLAP`
-- 对话历史持久化配置：`CONVERSATION_HISTORY_ENABLED`（默认 `True`）、`CONVERSATION_HISTORY_REDIS_TTL`（默认 `604800` 秒 = 7 天）
-- 消息队列配置：`MQ_QUEUE_KEY`（Redis List key，默认 `mq:conversation_history`）、`MQ_BATCH_SIZE`（默认 `10`）、`MQ_RETRY_COUNT`（默认 `3`）、`MQ_FALLBACK_LOG_FILE`（默认 `logs/mq_fallback.jsonl`）
-- Rerank 重排配置：`RERANK_ENABLED`（默认 `False`）、`RERANK_CANDIDATE_COUNT`（粗排召回数，默认 `30`）、`DASHSCOPE_RERANK_MODEL`（默认 `text-rerank-v1`）
-- MCP 服务器地址在 config 中配置（默认 `localhost:8003` 和 `localhost:8004`）
-
-### 日志
-
-- 使用 **Loguru**（非标准 logging），全局 `from loguru import logger`
-- 控制台 + 文件（`logs/app_YYYY-MM-DD.log`，按天轮转，保留 7 天，zip 压缩）
-- Debug 模式（`config.debug=True`）下显示完整异常栈和变量值
-
-### 依赖管理
-
-- 依赖定义在 `pyproject.toml`，锁定文件为 `uv.lock`
-- LLM：`langchain-qwq`（ChatQwen 原生集成，非通用 OpenAI 兼容）
-- 向量库：`langchain-milvus` + `pymilvus`
-- MCP：`langchain-mcp-adapters` + `fastmcp`
-- 注意 `DASHSCOPE_API_BASE` 必须配置为 `https://dashscope.aliyuncs.com/compatible-mode/v1`，否则默认访问新加坡站点
+| 变更类型 | 验证命令 |
+|----------|----------|
+| 业务逻辑 / API | `make check-all` |
+| 向量检索 / RAG | `make test` + 手动 `curl` 测试 `/api/chat_stream` |
+| MCP 工具 | `make status-mcp` 确认服务在线 |
+| 配置变更 | `make start` + `curl localhost:9999/health` |
+| 认证模块 | `make test` + 检查 JWT 令牌流程 |
