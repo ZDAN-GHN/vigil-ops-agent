@@ -6,38 +6,14 @@
 2. 存储和更新用户画像
 3. 加载用户画像用于上下文增强
 """
+from textwrap import dedent
 
-from typing import Optional
-
+from langchain_core.prompts import ChatPromptTemplate
 from loguru import logger
 from sqlalchemy import select
 
 from app.core.mysql_client import mysql_manager
-from app.models.user_profile import ConversationSummary, UserProfile
-
-# 从摘要中提取用户特征的提示词
-FEATURE_EXTRACTION_PROMPT = """请从以下对话摘要中提取用户特征信息。
-
-对话摘要：
-{summary}
-
-请分析并提取以下维度的信息（如果摘要中有相关内容）：
-1. 用户角色/职位（如：运维工程师、开发工程师、架构师）
-2. 关注领域（如：Kubernetes、数据库、网络、安全）
-3. 技术栈偏好（如：使用的工具、语言、框架）
-4. 工作习惯（如：偏好简洁回答、喜欢详细解释）
-5. 常见问题类型（如：故障排查、性能优化、架构设计）
-
-请以 JSON 格式返回，格式如下：
-{{
-    "role": "用户角色",
-    "focus_areas": ["关注领域1", "关注领域2"],
-    "tech_stack": ["技术1", "技术2"],
-    "preferences": {{"response_style": "简洁/详细", ...}},
-    "common_issues": ["问题类型1", "问题类型2"]
-}}
-
-只返回 JSON，不要其他内容。如果某个维度无法提取，可以省略或返回空值。"""
+from app.models.user_profile import ConversationSummary, UserFeatures, UserProfile
 
 
 class LongTermMemoryService:
@@ -64,7 +40,7 @@ class LongTermMemoryService:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("长期记忆数据库表初始化完成")
 
-    async def get_user_profile(self, user_id: str) -> Optional[UserProfile]:
+    async def get_user_profile(self, user_id: str) -> UserProfile | None:
         """
         获取用户画像
 
@@ -81,10 +57,10 @@ class LongTermMemoryService:
             return result.scalar_one_or_none()
 
     async def create_or_update_profile(
-        self,
-        user_id: str,
-        features: Optional[dict] = None,
-        preferences: Optional[dict] = None,
+            self,
+            user_id: str,
+            features: dict | None = None,
+            preferences: dict | None = None,
     ) -> UserProfile:
         """
         创建或更新用户画像
@@ -126,12 +102,12 @@ class LongTermMemoryService:
             return profile
 
     async def save_conversation_summary(
-        self,
-        session_id: str,
-        summary: str,
-        user_id: Optional[str] = None,
-        features_extracted: Optional[dict] = None,
-        message_count: int = 0,
+            self,
+            session_id: str,
+            summary: str,
+            user_id: str | None = None,
+            features_extracted: dict | None = None,
+            message_count: int = 0,
     ) -> ConversationSummary:
         """
         保存对话摘要记录
@@ -163,6 +139,9 @@ class LongTermMemoryService:
         """
         从对话摘要中提取用户特征
 
+        使用 LangChain LCEL 管道 + with_structured_output 实现结构化输出，
+        与 planner.py / replanner.py 保持一致的模式。
+
         Args:
             summary: 对话摘要
 
@@ -174,36 +153,47 @@ class LongTermMemoryService:
             return {}
 
         try:
-            prompt = FEATURE_EXTRACTION_PROMPT.format(summary=summary)
-            response = await self.llm.ainvoke(prompt)
-            content = response.content.strip()
+            # 构建 LCEL 管道：提示词模板 → LLM 结构化输出
+            # 从摘要中提取用户特征的提示词模板
+            feature_extraction_prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        dedent("""
+                            你是一个用户画像分析专家。请从对话摘要中提取用户特征信息，覆盖以下维度（如果摘要中有相关内容）：
+                            
+                            1. 用户角色/职位（如：运维工程师、开发工程师、架构师）
+                            2. 关注领域（如：Kubernetes、数据库、网络、安全）
+                            3. 技术栈偏好（如：使用的工具、语言、框架）
+                            4. 工作习惯（如：偏好简洁回答、喜欢详细解释）
+                            5. 常见问题类型（如：故障排查、性能优化、架构设计）
+                            
+                            输出约束：
+                            - 严格按照结构化格式输出，无法提取的维度留空
+                            - 未按照约束执行的输出视作任务执行失败
+                        """).strip(),
+                    ),
+                    ("human", "{summary}"),
+                ]
+            )
+            feature_extraction_chain = feature_extraction_prompt | self.llm.with_structured_output(UserFeatures)
+            result: UserFeatures = await feature_extraction_chain.ainvoke({"summary": summary})
 
-            # 尝试解析 JSON
-            import json
-            # 移除可能的 markdown 代码块标记
-            if content.startswith("```"):
-                content = content.split("\n", 1)[1] if "\n" in content else content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
-
-            features = json.loads(content)
+            # 转为字典，排除默认空值字段以保持紧凑
+            features = result.model_dump(exclude_defaults=True)
             logger.info(f"提取用户特征: {list(features.keys())}")
             return features
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"解析特征 JSON 失败: {e}")
-            return {}
         except Exception as e:
             logger.error(f"提取用户特征失败: {e}")
             return {}
 
     async def process_summary(
-        self,
-        session_id: str,
-        summary: str,
-        user_id: Optional[str] = None,
-        message_count: int = 0,
+            self,
+            session_id: str,
+            summary: str,
+            user_id: str | None = None,
+            message_count: int = 0,
     ) -> dict:
         """
         处理对话摘要：提取特征并更新用户画像
@@ -280,9 +270,7 @@ class LongTermMemoryService:
 
         return "【用户画像】\n" + "\n".join(parts)
 
-    async def get_recent_summaries(
-        self, user_id: str, limit: int = 5
-    ) -> list[ConversationSummary]:
+    async def get_recent_summaries(self, user_id: str, limit: int = 5) -> list[ConversationSummary]:
         """
         获取用户最近的对话摘要
 

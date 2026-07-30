@@ -148,6 +148,15 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # 检查 Access Token 是否在 Redis 缓存中存在（防止已吊销的 token 继续使用）
+    token_valid = await auth_service.verify_access_token_cached(token)
+    if not token_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="认证令牌已被吊销，请重新登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     user_id = int(payload["sub"])
     user = await auth_service.get_user_by_id(user_id)
 
@@ -155,6 +164,17 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户不存在",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 校验 JWT 中的 username 与数据库是否一致（防止用户名修改后旧 token 仍有效）
+    if payload.get("username") != user.username:
+        logger.warning(
+            f"Token username 与数据库不一致: token={payload.get('username')}, db={user.username}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="令牌信息与数据库不一致，请重新登录",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

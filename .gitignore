@@ -81,6 +81,9 @@ dmypy.json
 # qoder
 .qoderignore
 
+# Pi agent
+.pi/
+
 # Claude Code
 .claude/
 

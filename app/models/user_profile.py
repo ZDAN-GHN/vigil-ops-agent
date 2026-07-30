@@ -5,12 +5,14 @@
 
 from datetime import datetime
 
+from pydantic import BaseModel, Field
 from sqlalchemy import JSON, DateTime, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
     """SQLAlchemy 基类"""
+
     pass
 
 
@@ -45,9 +47,7 @@ class UserProfile(Base):
     last_summary_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, comment="最后一次摘要时间"
     )
-    notes: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="备注信息"
-    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True, comment="备注信息")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), comment="创建时间"
     )
@@ -78,7 +78,9 @@ class ConversationSummary(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     session_id: Mapped[str] = mapped_column(String(128), index=True, comment="会话ID")
-    user_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True, comment="用户ID")
+    user_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, index=True, comment="用户ID"
+    )
     summary: Mapped[str] = mapped_column(Text, nullable=False, comment="摘要内容")
     features_extracted: Mapped[dict] = mapped_column(
         JSON, default=dict, nullable=False, comment="提取的特征"
@@ -90,3 +92,39 @@ class ConversationSummary(Base):
 
     def __repr__(self) -> str:
         return f"<ConversationSummary(session_id={self.session_id}, user_id={self.user_id})>"
+
+
+class UserFeatures(BaseModel):
+    """用户特征结构化输出模型
+
+    用于 LLM 结构化输出，从对话摘要中提取用户特征。
+    所有字段设置默认值，兼容"无法提取时省略"的场景。
+
+    Attributes:
+        role: 用户角色/职位（如：运维工程师、开发工程师、架构师）
+        focus_areas: 关注领域列表（如：Kubernetes、数据库、网络、安全）
+        tech_stack: 技术栈偏好列表（如：使用的工具、语言、框架）
+        preferences: 工作习惯/偏好字典（如：response_style="简洁"）
+        common_issues: 常见问题类型列表（如：故障排查、性能优化、架构设计）
+    """
+
+    role: str = Field(
+        default="",
+        description="用户角色/职位，如：运维工程师、开发工程师、架构师",
+    )
+    focus_areas: list[str] = Field(
+        default_factory=list,
+        description="关注领域列表，如：Kubernetes、数据库、网络、安全",
+    )
+    tech_stack: list[str] = Field(
+        default_factory=list,
+        description="技术栈偏好列表，如：使用的工具、语言、框架",
+    )
+    preferences: dict[str, str] = Field(
+        default_factory=dict,
+        description="工作习惯/偏好字典，如：response_style='简洁'",
+    )
+    common_issues: list[str] = Field(
+        default_factory=list,
+        description="常见问题类型列表，如：故障排查、性能优化、架构设计",
+    )

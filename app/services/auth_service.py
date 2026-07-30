@@ -208,6 +208,11 @@ class AuthService:
 
             await session.flush()
             logger.info(f"更新用户: {user.username} (id={user_id})")
+
+            # 密码修改或账户禁用时，吊销该用户所有 Access Token
+            if password is not None or (is_active is not None and not is_active):
+                await self.revoke_all_user_access_tokens(user_id)
+
             return user
 
     async def delete_user(self, user_id: int) -> bool:
@@ -262,6 +267,94 @@ class AuthService:
             users = list(result.scalars().all())
 
             return users, total
+
+    # ========== Access Token 缓存管理 ==========
+
+    async def store_access_token(self, access_token: str, user_id: int) -> None:
+        """
+        存储 Access Token 到 Redis，用于免登录校验和服务端主动吊销
+
+        Args:
+            access_token: JWT Access Token 字符串
+            user_id: 用户 ID
+        """
+        redis_client = await redis_manager.get_client()
+        token_key = f"access_token:{access_token}"
+        user_set_key = f"user_access_tokens:{user_id}"
+        ttl = config.access_token_cache_ttl_seconds
+
+        await redis_client.set(token_key, str(user_id), ex=ttl)
+        await redis_client.sadd(user_set_key, access_token)
+        logger.debug(
+            f"存储 access_token: user_id={user_id}, ttl={ttl}s"
+        )
+
+    async def verify_access_token_cached(self, access_token: str) -> bool:
+        """
+        验证 Access Token 是否在 Redis 缓存中存在
+
+        Args:
+            access_token: JWT Access Token 字符串
+
+        Returns:
+            bool: 存在返回 True，不存在返回 False
+        """
+        redis_client = await redis_manager.get_client()
+        token_key = f"access_token:{access_token}"
+        exists = await redis_client.exists(token_key)
+        return exists > 0
+
+    async def revoke_access_token(self, access_token: str) -> bool:
+        """
+        吊销单个 Access Token（从 Redis 中删除）
+
+        Args:
+            access_token: JWT Access Token 字符串
+
+        Returns:
+            bool: 是否成功吊销
+        """
+        redis_client = await redis_manager.get_client()
+        token_key = f"access_token:{access_token}"
+
+        # 先获取 user_id 以便清理集合索引
+        user_id_str = await redis_client.get(token_key)
+        deleted = await redis_client.delete(token_key)
+
+        if user_id_str:
+            user_set_key = f"user_access_tokens:{user_id_str}"
+            await redis_client.srem(user_set_key, access_token)
+
+        if deleted:
+            logger.info(f"已吊销 access_token: {access_token[:16]}...")
+        return deleted > 0
+
+    async def revoke_all_user_access_tokens(self, user_id: int) -> int:
+        """
+        吊销某用户的所有 Access Token（密码修改、账户禁用、登出时使用）
+
+        Args:
+            user_id: 用户 ID
+
+        Returns:
+            int: 成功吊销的 token 数量
+        """
+        redis_client = await redis_manager.get_client()
+        user_set_key = f"user_access_tokens:{user_id}"
+
+        # 获取该用户所有已缓存的 access_token
+        tokens = await redis_client.smembers(user_set_key)
+        if not tokens:
+            return 0
+
+        # 批量删除 token 缓存键
+        token_keys = [f"access_token:{t}" for t in tokens]
+        deleted = await redis_client.delete(*token_keys)
+        # 删除用户 token 集合
+        await redis_client.delete(user_set_key)
+
+        logger.info(f"已吊销用户 {user_id} 的所有 access_token，共 {deleted} 个")
+        return deleted
 
     # ========== Refresh Token 管理 ==========
 

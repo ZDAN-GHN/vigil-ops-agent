@@ -212,8 +212,15 @@ function createSessionModule(app) {
             input.focus();
             input.select();
 
+            // 防止重复保存的标志位
+            let saved = false;
+
             // 保存编辑
             const saveEdit = async () => {
+                // 防止重复调用
+                if (saved) return;
+                saved = true;
+
                 const newTitle = input.value.trim();
                 if (newTitle && newTitle !== currentTitle) {
                     await this.updateSessionTitle(sessionId, newTitle);
@@ -227,6 +234,7 @@ function createSessionModule(app) {
                     e.preventDefault();
                     saveEdit();
                 } else if (e.key === 'Escape') {
+                    saved = true; // 标记为已处理，防止 blur 再次触发
                     this.renderSessions();
                 }
             });

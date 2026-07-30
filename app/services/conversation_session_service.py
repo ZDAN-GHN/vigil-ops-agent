@@ -68,6 +68,7 @@ class ConversationSessionService:
                 )
                 existing = result.scalar_one_or_none()
                 if existing:
+                    session.expunge(existing)
                     logger.debug(f"会话已存在: {session_id}")
                     return existing
 
@@ -80,6 +81,8 @@ class ConversationSessionService:
                 )
                 session.add(new_session)
                 await session.flush()
+                await session.refresh(new_session)
+                session.expunge(new_session)
 
                 logger.info(
                     f"创建新会话: session_id={session_id}, user_id={user_id}"
@@ -114,7 +117,10 @@ class ConversationSessionService:
                     query = query.where(ConversationSession.user_id == user_id)
 
                 result = await session.execute(query)
-                return result.scalar_one_or_none()
+                obj = result.scalar_one_or_none()
+                if obj is not None:
+                    session.expunge(obj)
+                return obj
 
         except Exception as e:
             logger.error(f"获取会话失败: session_id={session_id}, 错误: {e}")
@@ -161,6 +167,8 @@ class ConversationSessionService:
                     .limit(limit)
                 )
                 sessions = list(result.scalars().all())
+                for s in sessions:
+                    session.expunge(s)
 
                 return sessions, total
 
@@ -204,6 +212,8 @@ class ConversationSessionService:
                     conv_session.title = title
 
                 await session.flush()
+                await session.refresh(conv_session)
+                session.expunge(conv_session)
                 logger.info(f"更新会话: session_id={session_id}")
                 return conv_session
 

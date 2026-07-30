@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     mq_queue_key: str = "mq:conversation_history"  # Redis List key
     mq_batch_size: int = 10  # 每批消费的消息数量
     mq_retry_count: int = 3  # 消费失败重试次数
-    mq_fallback_log_file: str = "logs/mq_fallback.jsonl"  # 兜底日志文件路径
+    mq_fallback_log_file: str = f"{BASE_DIR}/logs/mq_fallback.jsonl"  # 兜底日志文件路径
 
     # MySQL 配置（用于长期记忆 - 用户画像）
     mysql_host: str = "localhost"
@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
+    access_token_cache_ttl_seconds: int = 259200  # Access Token Redis 缓存 TTL，默认 3 天（秒）
 
     # 初始管理员配置（首次启动时自动创建）
     initial_admin_username: str = "admin"

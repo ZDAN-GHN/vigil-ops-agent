@@ -4,9 +4,10 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from loguru import logger
 
-from app.core.auth import create_access_token, create_refresh_token, get_current_user
+from app.core.auth import create_access_token, create_refresh_token, get_current_user, security
 from app.models.auth_schema import (
     LoginRequest,
     LoginResponse,
@@ -53,6 +54,8 @@ async def login(request: LoginRequest):
 
     # 存储 refresh_token 到 Redis
     await auth_service.store_refresh_token(refresh_token, user.id)
+    # 存储 access_token 到 Redis（用于免登录校验和服务端主动吊销）
+    await auth_service.store_access_token(access_token, user.id)
 
     logger.info(f"用户登录成功: {user.username}")
 
@@ -99,6 +102,8 @@ async def refresh_token(request: RefreshRequest):
 
     # 签发新的 access_token
     new_access_token = create_access_token(user.id, user.username)
+    # 存储新 access_token 到 Redis
+    await auth_service.store_access_token(new_access_token, user.id)
 
     return TokenResponse(
         access_token=new_access_token,
@@ -107,20 +112,29 @@ async def refresh_token(request: RefreshRequest):
 
 
 @router.post("/logout")
-async def logout(request: RefreshRequest):
+async def logout(
+    request: RefreshRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
     """用户登出
 
-    吊销 refresh_token，access_token 将在自然过期后失效。
+    同时吊销 refresh_token 和 access_token，立即失效。
 
     Args:
         request: 登出请求（包含 refresh_token）
+        credentials: HTTP Bearer 凭证（access_token）
 
     Returns:
         dict: 登出结果
     """
-    success = await auth_service.revoke_refresh_token(request.refresh_token)
+    # 吊销 refresh_token
+    refresh_success = await auth_service.revoke_refresh_token(request.refresh_token)
 
-    if success:
+    # 吊销当前 access_token
+    access_token = credentials.credentials
+    await auth_service.revoke_access_token(access_token)
+
+    if refresh_success:
         logger.info("用户登出成功")
         return {"message": "登出成功"}
     else:

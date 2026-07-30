@@ -307,6 +307,131 @@ class TestAuthService:
             assert result is True
             mock_client.delete.assert_called_once_with("refresh_token:test-uuid")
 
+    # ========== Access Token 缓存管理测试 ==========
+
+    @pytest.mark.asyncio
+    async def test_store_access_token(self):
+        """store_access_token 应写入 Redis 缓存键和用户集合"""
+        from app.services.auth_service import AuthService
+
+        service = AuthService()
+
+        with patch("app.services.auth_service.redis_manager") as mock_redis:
+            mock_client = AsyncMock()
+            mock_client.set = AsyncMock()
+            mock_client.sadd = AsyncMock()
+            mock_redis.get_client = AsyncMock(return_value=mock_client)
+
+            await service.store_access_token("jwt-token-abc", user_id=42)
+
+            # 验证 token 缓存键
+            mock_client.set.assert_called_once()
+            call_args = mock_client.set.call_args
+            assert call_args[0][0] == "access_token:jwt-token-abc"
+            assert call_args[0][1] == "42"
+            assert call_args[1]["ex"] == config.access_token_cache_ttl_seconds
+
+            # 验证用户集合索引
+            mock_client.sadd.assert_called_once_with(
+                "user_access_tokens:42", "jwt-token-abc"
+            )
+
+    @pytest.mark.asyncio
+    async def test_verify_access_token_cached_exists(self):
+        """Redis 中存在的 access_token 应验证通过"""
+        from app.services.auth_service import AuthService
+
+        service = AuthService()
+
+        with patch("app.services.auth_service.redis_manager") as mock_redis:
+            mock_client = AsyncMock()
+            mock_client.exists = AsyncMock(return_value=1)
+            mock_redis.get_client = AsyncMock(return_value=mock_client)
+
+            result = await service.verify_access_token_cached("jwt-token-abc")
+            assert result is True
+            mock_client.exists.assert_called_once_with("access_token:jwt-token-abc")
+
+    @pytest.mark.asyncio
+    async def test_verify_access_token_cached_not_exists(self):
+        """Redis 中不存在的 access_token 应验证失败"""
+        from app.services.auth_service import AuthService
+
+        service = AuthService()
+
+        with patch("app.services.auth_service.redis_manager") as mock_redis:
+            mock_client = AsyncMock()
+            mock_client.exists = AsyncMock(return_value=0)
+            mock_redis.get_client = AsyncMock(return_value=mock_client)
+
+            result = await service.verify_access_token_cached("revoked-token")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_revoke_access_token(self):
+        """revoke_access_token 应删除 Redis 缓存键和集合索引"""
+        from app.services.auth_service import AuthService
+
+        service = AuthService()
+
+        with patch("app.services.auth_service.redis_manager") as mock_redis:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value="42")
+            mock_client.delete = AsyncMock(return_value=1)
+            mock_client.srem = AsyncMock()
+            mock_redis.get_client = AsyncMock(return_value=mock_client)
+
+            result = await service.revoke_access_token("jwt-token-abc")
+            assert result is True
+
+            # 验证删除了 token 缓存键
+            mock_client.delete.assert_called_once_with("access_token:jwt-token-abc")
+            # 验证从用户集合中移除
+            mock_client.srem.assert_called_once_with(
+                "user_access_tokens:42", "jwt-token-abc"
+            )
+
+    @pytest.mark.asyncio
+    async def test_revoke_all_user_access_tokens(self):
+        """revoke_all_user_access_tokens 应批量删除用户所有 token"""
+        from app.services.auth_service import AuthService
+
+        service = AuthService()
+
+        with patch("app.services.auth_service.redis_manager") as mock_redis:
+            mock_client = AsyncMock()
+            mock_client.smembers = AsyncMock(
+                return_value={"token-a", "token-b", "token-c"}
+            )
+            mock_client.delete = AsyncMock(return_value=4)  # 3 个 token + 1 个集合
+            mock_redis.get_client = AsyncMock(return_value=mock_client)
+
+            result = await service.revoke_all_user_access_tokens(user_id=42)
+            assert result == 4
+
+            # 验证批量删除了 token 缓存键
+            delete_call_args = mock_client.delete.call_args_list[0]
+            assert "access_token:token-a" in delete_call_args[0]
+            assert "access_token:token-b" in delete_call_args[0]
+            assert "access_token:token-c" in delete_call_args[0]
+            # 验证删除了用户集合
+            mock_client.delete.assert_any_call("user_access_tokens:42")
+
+    @pytest.mark.asyncio
+    async def test_revoke_all_user_access_tokens_empty(self):
+        """用户无缓存 token 时应返回 0"""
+        from app.services.auth_service import AuthService
+
+        service = AuthService()
+
+        with patch("app.services.auth_service.redis_manager") as mock_redis:
+            mock_client = AsyncMock()
+            mock_client.smembers = AsyncMock(return_value=set())
+            mock_redis.get_client = AsyncMock(return_value=mock_client)
+
+            result = await service.revoke_all_user_access_tokens(user_id=999)
+            assert result == 0
+
 
 # ========== get_current_user 依赖测试 ==========
 
@@ -335,6 +460,7 @@ class TestGetCurrentUser:
         payload = {"sub": "999", "username": "ghost"}
         mock_auth = MagicMock()
         mock_auth.get_user_by_id = AsyncMock(return_value=None)
+        mock_auth.verify_access_token_cached = AsyncMock(return_value=True)
 
         with patch.object(auth_module, "verify_access_token", return_value=payload):
             with patch("app.services.auth_service.auth_service", mock_auth):
@@ -352,10 +478,12 @@ class TestGetCurrentUser:
 
         mock_user = MagicMock()
         mock_user.is_active = False
+        mock_user.username = "disabled"
         payload = {"sub": "1", "username": "disabled"}
 
         mock_auth = MagicMock()
         mock_auth.get_user_by_id = AsyncMock(return_value=mock_user)
+        mock_auth.verify_access_token_cached = AsyncMock(return_value=True)
 
         with patch.object(auth_module, "verify_access_token", return_value=payload):
             with patch("app.services.auth_service.auth_service", mock_auth):
@@ -378,6 +506,7 @@ class TestGetCurrentUser:
 
         mock_auth = MagicMock()
         mock_auth.get_user_by_id = AsyncMock(return_value=mock_user)
+        mock_auth.verify_access_token_cached = AsyncMock(return_value=True)
 
         with patch.object(auth_module, "verify_access_token", return_value=payload):
             with patch("app.services.auth_service.auth_service", mock_auth):
@@ -386,3 +515,47 @@ class TestGetCurrentUser:
                 result = await get_current_user(mock_creds)
                 assert result is mock_user
                 assert result.username == "testuser"
+
+    @pytest.mark.asyncio
+    async def test_token_not_in_redis_raises_401(self):
+        """Redis 中不存在的 token（已吊销/未缓存）应抛出 401"""
+        from fastapi import HTTPException
+        import app.core.auth as auth_module
+
+        payload = {"sub": "1", "username": "testuser"}
+        mock_auth = MagicMock()
+        mock_auth.verify_access_token_cached = AsyncMock(return_value=False)
+
+        with patch.object(auth_module, "verify_access_token", return_value=payload):
+            with patch("app.services.auth_service.auth_service", mock_auth):
+                with pytest.raises(HTTPException) as exc_info:
+                    mock_creds = MagicMock()
+                    mock_creds.credentials = "revoked-token"
+                    await get_current_user(mock_creds)
+                assert exc_info.value.status_code == 401
+                assert "已被吊销" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_username_mismatch_raises_401(self):
+        """JWT 中的 username 与数据库不一致时应抛出 401"""
+        from fastapi import HTTPException
+        import app.core.auth as auth_module
+
+        mock_user = MagicMock()
+        mock_user.id = 1
+        mock_user.username = "new_username"  # 数据库中已修改
+        mock_user.is_active = True
+        payload = {"sub": "1", "username": "old_username"}  # JWT 中仍是旧名
+
+        mock_auth = MagicMock()
+        mock_auth.get_user_by_id = AsyncMock(return_value=mock_user)
+        mock_auth.verify_access_token_cached = AsyncMock(return_value=True)
+
+        with patch.object(auth_module, "verify_access_token", return_value=payload):
+            with patch("app.services.auth_service.auth_service", mock_auth):
+                with pytest.raises(HTTPException) as exc_info:
+                    mock_creds = MagicMock()
+                    mock_creds.credentials = "valid-token"
+                    await get_current_user(mock_creds)
+                assert exc_info.value.status_code == 401
+                assert "不一致" in exc_info.value.detail
