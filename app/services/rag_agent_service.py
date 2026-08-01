@@ -14,9 +14,12 @@ from langchain.agents.middleware import SummarizationMiddleware
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
     BaseMessage,
     HumanMessage,
-    SystemMessage, HumanMessageChunk, AIMessage, AIMessageChunk,
+    HumanMessageChunk,
+    SystemMessage,
 )
 from langchain_qwq import ChatQwen
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -32,6 +35,8 @@ from app.core.feature_extraction_middleware import FeatureExtractionMiddleware
 from app.core.redis_checkpointer import AsyncRedisSaver
 from app.services.long_term_memory_service import long_term_memory_service
 from app.tools import get_current_time, retrieve_knowledge
+from app.utils.decorator import i_aafter
+from app.utils.redis_queue import RedisQueue  # noqa: E402
 
 
 # 阿里千问大模型和langchain集成参考： https://docs.langchain.com/oss/python/integrations/chat/qwen
@@ -88,22 +93,27 @@ class RagAgentService:
         self.mcp_tools: list = []
 
         # 创建 Redis 检查点（热数据，用于会话持久化）
-        self.checkpointer: AsyncRedisSaver | None = None
+        self._aredis_saver: AsyncRedisSaver = None
 
         # PostgreSQL 冷 checkpointer（Redis TTL 过期后 fallback，由 main.py lifespan 注入）
-        self.postgres_saver: AsyncPostgresSaver | None = None
+        self._apostgres_saver: AsyncPostgresSaver = None
 
         # LangGraph Store（长期记忆，由 main.py lifespan 注入）
-        self.store: BaseStore = None
+        self._store: BaseStore = None
 
         # Agent 初始化（会在异步方法中完成）
-        self.agent = None
+        self._agent = None
         self._agent_initialized = False
+
+        # 消息队列持久化消费者（由 start_persistence_consumer 初始化）
+        self._persistence_queue: RedisQueue = None
 
         logger.info(
             f"RAG Agent 服务初始化完成 (ChatQwen), model={self.model.model}, "
             f"streaming={streaming}, summary_enabled={self.summary_enabled}"
         )
+
+    # region 私有方法
 
     # 绑定模型
     def _bind_model(self, model: str | BaseChatModel | None):
@@ -198,8 +208,6 @@ class RagAgentService:
             else summary_setting["summary_prompt"]
         )
 
-    # region 私有方法
-
     async def _initialize_agent(self):
         """异步初始化 Agent（包括 MCP 工具和摘要中间件）"""
         if self._agent_initialized:
@@ -220,20 +228,20 @@ class RagAgentService:
         all_tools = self.tools + self.mcp_tools
 
         # 懒加载 Redis CheckPointer
-        if self.checkpointer is None:
+        if self._aredis_saver is None:
             from app.core.manager.redis_client import redis_manager
 
             redis_client = await redis_manager.get_client()
-            self.checkpointer = AsyncRedisSaver(redis_client, ttl=config.redis_checkpoint_ttl)
+            self._aredis_saver = AsyncRedisSaver(redis_client, ttl=config.redis_checkpoint_ttl)
             logger.info("Redis CheckPointer 初始化完成")
 
         # 构建中间件列表
         middleware = []
 
         # 用户画像特征提取中间件：从 Store 加载/保存用户画像
-        if self.store is not None and config.long_term_memory_enabled:
+        if self._store is not None and config.long_term_memory_enabled:
             feature_middleware = FeatureExtractionMiddleware(
-                store=self.store,
+                store=self._store,
                 llm=self.model,
             )
             middleware.append(feature_middleware)
@@ -259,11 +267,11 @@ class RagAgentService:
                 f"keep={self.summary_keep_messages} 条消息"
             )
 
-        self.agent = create_agent(
+        self._agent = create_agent(
             model=self.model,
             tools=all_tools,
-            checkpointer=self.checkpointer,
-            store=self.store,
+            checkpointer=self._aredis_saver,
+            store=self._store,
             middleware=middleware,
             context_schema=AgentContext,
         )
@@ -274,7 +282,7 @@ class RagAgentService:
             tool_names = [tool.name if hasattr(tool, "name") else str(tool) for tool in all_tools]
             logger.info(f"可用工具列表: {', '.join(tool_names)}")
 
-    async def _ensure_checkpoint_restored(self, session_id: str) -> None:
+    async def _wake_redis_checkpoint(self, session_id: str) -> None:
         """确保 Redis checkpoint 存在，若不存在则从 PostgreSQL 冷存储恢复
 
         当 Redis TTL 过期导致 checkpoint 丢失时，从 PostgreSQL 冷 checkpoint
@@ -286,18 +294,21 @@ class RagAgentService:
         if not config.conversation_history_enabled:
             return
 
-        if self.checkpointer is None:
+        if self._aredis_saver is None:
+            logger.info(
+                f"[会话 {session_id}] Redis checkpoint 不存在"
+            )
             return
 
         # 检查 Redis 中是否已有 checkpoint
         cfg = {"configurable": {"thread_id": session_id}}
-        checkpoint_tuple = await self.checkpointer.aget_tuple(cfg)
+        checkpoint_tuple = await self._aredis_saver.aget_tuple(cfg)
         if checkpoint_tuple is not None:
             # Redis 中有数据，无需恢复
             return
 
         # Redis 中无数据，尝试从 PostgreSQL 冷 checkpoint 恢复
-        if self.postgres_saver is None:
+        if self._apostgres_saver is None:
             logger.info(
                 f"[会话 {session_id}] Redis checkpoint 不存在，且 PostgreSQL 冷存储未初始化"
             )
@@ -305,55 +316,95 @@ class RagAgentService:
 
         logger.info(f"[会话 {session_id}] Redis checkpoint 不存在，尝试从 PostgreSQL 恢复...")
         pg_config = {"configurable": {"thread_id": session_id}}
-        pg_tuple = await self.postgres_saver.aget_tuple(pg_config)
+        pg_tuple = await self._apostgres_saver.aget_tuple(pg_config)
         if pg_tuple is None:
             logger.info(f"[会话 {session_id}] PostgreSQL 中也无 checkpoint")
             return
 
         # 将 PostgreSQL 中的 checkpoint 恢复到 Redis
-        restore_config = {
-            "configurable": {
-                "thread_id": session_id,
-                "checkpoint_ns": "",
-            }
-        }
-        await self.checkpointer.aput(
+        restore_config = pg_config
+        await self._aredis_saver.aput(
             restore_config,
             pg_tuple.checkpoint,
             pg_tuple.metadata or {},
             pg_tuple.checkpoint.get("channel_versions", {}),
         )
 
-        # 设置 TTL
-        if self.checkpointer.ttl > 0:
-            key = self.checkpointer._key(session_id, "")
-            await self.checkpointer.conn.expire(key, config.conversation_history_redis_ttl)
-
         logger.info(
             f"[会话 {session_id}] 已从 PostgreSQL 恢复 checkpoint 到 Redis "
             f"(TTL={config.conversation_history_redis_ttl}s)"
         )
 
-    async def _persist_to_postgres(self, session_id: str, async_: bool = True) -> None:
+    async def _persist_checkpoint(self, session_id: str, async_: bool = True) -> None:
         """将 Redis checkpoint 持久化到 PostgreSQL 冷存储
 
-        Agent 执行完成后，将 Redis 中的最新 checkpoint 写入 PostgreSQL，
-        确保 Redis TTL 过期后仍可从冷存储恢复对话上下文。
+        优先通过 Redis 消息队列异步持久化（由后台消费者处理），
+        入队失败时降级为直接写入 PostgreSQL。
 
         Args:
             session_id: 会话 ID
-            async_: 是否异步执行（后台任务，不阻塞主流程），默认为 True
+            async_: 降级直接写 PG 时是否异步执行，默认为 True
         """
         if not config.conversation_history_enabled:
             return
 
-        if self.checkpointer is None or self.postgres_saver is None:
+        if self._aredis_saver is None or self._apostgres_saver is None:
             return
 
+        # 优先通过消息队列异步持久化
+        if self._persistence_queue is not None:
+            enqueued = await self._persist_via_queue(session_id)
+            if enqueued:
+                return
+            # 入队失败，降级为直接写 PG
+            logger.warning(
+                f"[会话 {session_id}] 消息队列入队失败，降级为直接持久化到 PostgreSQL"
+            )
+
+        # 降级：直接写入 PostgreSQL
         if async_:
             asyncio.create_task(self._do_persist_to_postgres(session_id))
         else:
             await self._do_persist_to_postgres(session_id)
+
+    async def _persist_via_queue(self, session_id: str) -> bool:
+        """通过消息队列异步持久化 checkpoint
+
+        将 session_id 放入 Redis 消息队列，由后台消费者执行 PostgreSQL 写入。
+        入队时自动附加时间戳用于延迟监控。
+
+        Args:
+            session_id: 会话 ID
+
+        Returns:
+            bool: 是否成功入队
+        """
+        if self._persistence_queue is None:
+            return False
+
+        import time
+
+        message = {"session_id": session_id, "_enqueue_ts": time.time()}
+        return await self._persistence_queue.enqueue(message)
+
+    async def _checkpoint_persistence_handler(self, data: dict) -> None:
+        """消息队列消费者 handler — 将 checkpoint 写入 PostgreSQL
+
+        Args:
+            data: 消息数据，包含 session_id
+        """
+        session_id = data.get("session_id")
+        if not session_id:
+            logger.warning(f"收到无效消息（缺少 session_id）: {data}")
+            return
+
+        if self._apostgres_saver is None:
+            logger.warning(
+                f"[会话 {session_id}] PostgreSQL 冷存储未初始化，跳过 MQ 持久化"
+            )
+            return
+
+        await self._do_persist_to_postgres(session_id)
 
     async def _do_persist_to_postgres(self, session_id: str) -> None:
         """实际执行 checkpoint 持久化到 PostgreSQL 的内部方法
@@ -363,7 +414,7 @@ class RagAgentService:
         """
         try:
             cfg = {"configurable": {"thread_id": session_id}}
-            checkpoint_tuple = await self.checkpointer.aget_tuple(cfg)
+            checkpoint_tuple = await self._aredis_saver.aget_tuple(cfg)
             if checkpoint_tuple is None:
                 return
 
@@ -373,7 +424,7 @@ class RagAgentService:
                     "checkpoint_ns": "",
                 }
             }
-            await self.postgres_saver.aput(
+            await self._apostgres_saver.aput(
                 restore_config,
                 checkpoint_tuple.checkpoint,
                 checkpoint_tuple.metadata or {},
@@ -398,11 +449,11 @@ class RagAgentService:
         Returns:
             拼接后的系统提示词字符串
         """
-        if not user_id or not self.store or not config.long_term_memory_enabled:
+        if not user_id or not self._store or not config.long_term_memory_enabled:
             return self.system_prompt
 
         try:
-            profile = await long_term_memory_service.load_user_profile(self.store, user_id)
+            profile = await long_term_memory_service.load_user_profile(self._store, user_id)
             if not profile:
                 return self.system_prompt
 
@@ -419,8 +470,15 @@ class RagAgentService:
 
     # endregion
 
-    # region 对外服务方法
+    # region 业务方法
 
+    # region 装饰器
+
+    _aafter_initialize_agent = i_aafter("_initialize_agent")
+
+    # endregion
+
+    @_aafter_initialize_agent
     async def query(
             self,
             question: str,
@@ -439,10 +497,8 @@ class RagAgentService:
             str: 完整答案
         """
         try:
-            await self._initialize_agent()
-
             # 确保 Redis checkpoint 存在（若过期则从 MySQL 恢复）
-            await self._ensure_checkpoint_restored(session_id)
+            await self._wake_redis_checkpoint(session_id)
 
             logger.info(f"[会话 {session_id}] RAG Agent 收到查询（非流式）: {question}")
 
@@ -458,14 +514,14 @@ class RagAgentService:
             config_dict = {"configurable": {"thread_id": session_id}}
 
             # context 作为独立关键字参数传递（长期记忆，供 Middleware 读取）
-            result = await self.agent.ainvoke(
+            result = await self._agent.ainvoke(
                 input=agent_input,
                 config=config_dict,
                 context=AgentContext(user_id=str(user_id) if user_id else None),
             )
 
             # 异步持久化到 PostgreSQL 冷存储（不阻塞主流程）
-            await self._persist_to_postgres(session_id, async_=True)
+            await self._persist_checkpoint(session_id, async_=True)
 
             # 提取最终答案
             messages_result = result.get("messages", [])
@@ -500,6 +556,7 @@ class RagAgentService:
             self._log_exception_group(f"[会话 {session_id}] RAG Agent 查询失败（非流式）", e)
             raise
 
+    @_aafter_initialize_agent
     async def query_stream(
             self,
             question: str,
@@ -520,10 +577,8 @@ class RagAgentService:
                 - data: 具体内容
         """
         try:
-            await self._initialize_agent()
-
             # 确保 Redis checkpoint 存在（若过期则从 MySQL 恢复）
-            await self._ensure_checkpoint_restored(session_id)
+            await self._wake_redis_checkpoint(session_id)
 
             logger.info(f"[会话 {session_id}] RAG Agent 收到查询（流式）: {question}")
 
@@ -539,7 +594,7 @@ class RagAgentService:
             config_dict = {"configurable": {"thread_id": session_id}}
 
             # context 作为独立关键字参数传递（长期记忆，供 Middleware 读取）
-            async for token, metadata in self.agent.astream(
+            async for token, metadata in self._agent.astream(
                     input=agent_input,
                     config=config_dict,
                     context=AgentContext(user_id=str(user_id) if user_id else None),
@@ -597,7 +652,7 @@ class RagAgentService:
                                 }
 
             # 流式完成后，异步持久化到 PostgreSQL 冷存储（不阻塞主流程）
-            await self._persist_to_postgres(session_id, async_=True)
+            await self._persist_checkpoint(session_id, async_=True)
 
             logger.info(f"[会话 {session_id}] RAG Agent 查询完成（流式）")
             yield {"type": "complete"}
@@ -607,6 +662,7 @@ class RagAgentService:
             yield {"type": "error", "data": str(e)}
             raise
 
+    @_aafter_initialize_agent
     async def get_chat_history(self, session_id: str) -> list:
         """
         获取会话历史（优先从 Redis checkpointer 读取，Redis 无数据时从 PostgreSQL 加载）
@@ -622,9 +678,9 @@ class RagAgentService:
             source = "none"
 
             # 1. 优先从 Redis checkpointer 读取
-            if self.checkpointer is not None:
-                cfg = {"configurable": {"thread_id": session_id}}
-                checkpoint_tuple = await self.checkpointer.aget_tuple(cfg)
+            cfg = {"configurable": {"thread_id": session_id}}
+            if self._aredis_saver is not None:
+                checkpoint_tuple = await self._aredis_saver.aget_tuple(cfg)
                 if checkpoint_tuple:
                     checkpoint_data = checkpoint_tuple.checkpoint
                     messages = checkpoint_data.get("channel_values", {}).get("messages", [])
@@ -634,16 +690,22 @@ class RagAgentService:
             if (
                     not messages
                     and config.conversation_history_enabled
-                    and self.postgres_saver is not None
+                    and self._apostgres_saver is not None
             ):
-                pg_config = {"configurable": {"thread_id": session_id}}
-                pg_tuple = await self.postgres_saver.aget_tuple(pg_config)
+                pg_tuple = await self._apostgres_saver.aget_tuple(cfg)
                 if pg_tuple:
                     messages = pg_tuple.checkpoint.get("channel_values", {}).get("messages", [])
                     if messages:
                         source = "postgres"
                         logger.info(
                             f"[会话 {session_id}] Redis 无数据，从 PostgreSQL 加载了 {len(messages)} 条历史"
+                        )
+                        # 3. 将 PostgreSQL 中的 checkpoint 恢复到 Redis
+                        await self._aredis_saver.aput(
+                            cfg,
+                            pg_tuple.checkpoint,
+                            pg_tuple.metadata or {},
+                            pg_tuple.checkpoint.get("channel_versions", {}),
                         )
 
             if not messages:
@@ -698,14 +760,14 @@ class RagAgentService:
         """
         try:
             # 1. 删除 Redis checkpoint
-            if self.checkpointer is not None:
-                await self.checkpointer.adelete_thread(session_id)
+            if self._aredis_saver is not None:
+                await self._aredis_saver.adelete_thread(session_id)
                 logger.info(f"已清除 Redis checkpoint: {session_id}")
 
             # 2. 删除 PostgreSQL 冷 checkpoint
-            if self.postgres_saver is not None:
+            if self._apostgres_saver is not None:
                 try:
-                    await self.postgres_saver.adelete_thread(session_id)
+                    await self._apostgres_saver.adelete_thread(session_id)
                     logger.info(f"已清除 PostgreSQL 冷 checkpoint: {session_id}")
                 except Exception as pg_err:
                     logger.warning(f"清除 PostgreSQL checkpoint 失败（非致命）: {pg_err}")
@@ -728,6 +790,18 @@ class RagAgentService:
 
     # endregion
 
+    # region 属性设置方法
+
+    def set_store(self, store: BaseStore):
+        self._store = store
+
+    def set_postgres_saver(self, apostgres_saver):
+        self._apostgres_saver = apostgres_saver
+
+    # endregion
+
+    # region 静态方法
+
     @staticmethod
     def _log_exception_group(prefix: str, exc: BaseException) -> None:
         """解包 ExceptionGroup / BaseExceptionGroup，逐条记录子异常详情
@@ -749,6 +823,40 @@ class RagAgentService:
         else:
             logger.error(f"{prefix}: {type(exc).__name__}: {exc}")
 
+    # endregion
+
+    # region 非业务方法
+
+    async def start_persistence_consumer(self) -> None:
+        """启动 checkpoint 持久化消费者
+
+        创建专用 RedisQueue 实例，注册 handler 将消息写入 PostgreSQL。
+        应在 PostgreSQL 冷 checkpointer 初始化之后调用。
+        """
+        if not config.conversation_history_enabled:
+            logger.info("对话历史持久化未启用，跳过 MQ 消费者启动")
+            return
+
+        self._persistence_queue = RedisQueue(
+            queue_key="rq:oc:rag:ckp",  # 消息队列键名
+            batch_size=10,  # 消费者单次消费数
+            retry_count=3,  # 消费失败重试次数,
+            max_queue_size=1000,  # 队列最大深度，超过则降级直接写 PG
+            blpop_timeout=5,  # BLPOP 阻塞超时（秒），0 表示永久阻塞
+        )
+        await self._persistence_queue.start_consumer(
+            self._checkpoint_persistence_handler
+        )
+        logger.info("Checkpoint 持久化消费者已启动（BLPOP 模式）")
+
+    async def stop_persistence_consumer(self) -> None:
+        """停止 checkpoint 持久化消费者"""
+        if self._persistence_queue is not None:
+            await self._persistence_queue.stop_consumer()
+            logger.info("Checkpoint 持久化消费者已停止")
+
+    # endregion
+
 
 # 全局单例 - 启用流式输出，摘要中间件默认开启
 # 可通过参数自定义摘要行为：
@@ -756,7 +864,7 @@ class RagAgentService:
 #   summary_trigger_messages=10    触发摘要的消息数阈值
 #   summary_keep_messages=6        摘要后保留最近消息数
 #   summary_model="qwen-turbo"     使用独立模型做摘要
-DEFAULT_RAG_PROMPT = dedent("""
+_DEFAULT_RAG_PROMPT = dedent("""
             你是一个专业的 AIOps 智能运维助手，能够使用多种工具来帮助用户解决问题。
 
             工作原则:
@@ -781,7 +889,7 @@ rag_agent_service = RagAgentService(
     model=ChatQwen(
         name=config.rag_model, temperature=1.0, profile={"max_input_tokens": 500 * 1024}
     ),
-    system_prompt=DEFAULT_RAG_PROMPT,
+    system_prompt=_DEFAULT_RAG_PROMPT,
     summary_setting={
         "summary_enabled": True,
         "summary_trigger_messages": 6,

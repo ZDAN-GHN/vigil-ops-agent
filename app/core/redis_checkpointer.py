@@ -786,9 +786,9 @@ class AsyncRedisSaver(BaseRedisSaver):
     ) -> RunnableConfig:
         """异步保存 checkpoint"""
         configurable = config["configurable"].copy()
-        thread_id = configurable.pop("thread_id")
-        checkpoint_ns = configurable.pop("checkpoint_ns")
-        parent_checkpoint_id = configurable.pop("checkpoint_id", None)
+        thread_id = configurable.get("thread_id")
+        checkpoint_ns = configurable.get("checkpoint_ns", "")
+        parent_checkpoint_id = configurable.get("checkpoint_id", None)
         key = self._key(thread_id, checkpoint_ns)
 
         next_config = {

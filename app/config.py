@@ -67,19 +67,10 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_db: int = 0
     redis_password: str = ""  # 空字符串表示无密码
-    redis_checkpoint_ttl: int = 604800  # checkpoint 过期时间，默认 7 天（秒）
+    redis_checkpoint_ttl: int = 1800  # checkpoint 过期时间，默认 30 分钟
 
     # 对话历史持久化配置（MySQL 备份 + Redis fallback）
-    conversation_history_enabled: bool = True  # 是否启用对话历史 MySQL 持久化
-    conversation_history_redis_ttl: int = 604800  # 从 MySQL 恢复到 Redis 时的 TTL，默认 7 天（秒）
-
-    # Redis 队列配置（通用基础设施）
-    redis_queue_key: str = "redis_queue:default"  # Redis List key
-    redis_queue_batch_size: int = 10  # 每批消费的消息数量
-    redis_queue_retry_count: int = 3  # 消费失败重试次数
-    redis_queue_fallback_log_file: str = (
-        f"{BASE_DIR}/logs/redis_queue_fallback.jsonl"  # 兜底日志文件路径
-    )
+    conversation_history_enabled: bool = True  # 是否启用对话历史持久化
 
     # MySQL 配置（仅用于用户鉴权 + 会话管理）
     mysql_host: str = "localhost"
@@ -152,4 +143,4 @@ class Settings(BaseSettings):
 config = Settings()
 
 if __name__ == "__main__":
-    print(Settings().model_config)
+    print(Settings())

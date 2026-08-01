@@ -67,17 +67,17 @@ async def lifespan(app: FastAPI):
                 AsyncPostgresStore.from_conn_string(config.postgres_dsn)
             )
             await pg_store.setup()
-            rag_agent_service.store = pg_store
+            rag_agent_service.set_store(pg_store)
             logger.info("✅ LangGraph Store 初始化完成")
 
         # 初始化冷 Checkpointer（PostgreSQL，Redis TTL 过期后 fallback）
         if config.conversation_history_enabled:
             logger.info("🧊 正在初始化 PostgreSQL 冷 Checkpointer...")
-            pg_saver = await stack.enter_async_context(
+            apg_saver = await stack.enter_async_context(
                 AsyncPostgresSaver.from_conn_string(config.postgres_dsn)
             )
-            await pg_saver.setup()
-            rag_agent_service.postgres_saver = pg_saver
+            await apg_saver.setup()
+            rag_agent_service.set_postgres_saver(apg_saver)
             logger.info("✅ PostgreSQL 冷 Checkpointer 初始化完成")
 
         # 初始化会话管理表
@@ -90,6 +90,9 @@ async def lifespan(app: FastAPI):
         await auth_service.init_db()
         logger.info("✅ 用户认证系统初始化完成")
 
+        # 启动 checkpoint 持久化消费者（BLPOP 模式）
+        await rag_agent_service.start_persistence_consumer()
+
         # 启动定时 AIOps 任务
         if config.enable_scheduled_aiops:
             await scheduled_aiops_service.start()
@@ -99,9 +102,10 @@ async def lifespan(app: FastAPI):
         yield
 
         # 关闭时执行
+        await rag_agent_service.stop_persistence_consumer()
         await scheduled_aiops_service.stop()
 
-    # AsyncExitStack 退出时自动关闭 pg_store / pg_saver 的数据库连接
+    # AsyncExitStack 退出时自动关闭 pg_store / apg_saver 的数据库连接
 
     logger.info("🔌 正在关闭连接...")
     milvus_manager.close()
