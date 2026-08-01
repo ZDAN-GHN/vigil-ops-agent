@@ -1,0 +1,205 @@
+# ============================================================================
+# Docker Compose 文件说明
+# ============================================================================
+#
+# Docker Compose 是什么？
+#   Docker Compose 是 Docker 官方提供的多容器编排工具，通过一个 YAML 文件
+#   定义和运行由多个容器组成的应用。一条 `docker compose up` 命令即可
+#   启动所有服务，`docker compose down` 即可全部停止并清理。
+#
+# 文件顶层结构（共 6 个可选根键）：
+#   services   —— 定义所有容器服务（核心，几乎必写）
+#   networks   —— 定义容器间通信的虚拟网络
+#   volumes    —— 定义可跨服务共享的持久化存储卷
+#   configs    —— 将外部配置文件挂载到容器内（只读）
+#   secrets    —— 安全地向容器传递敏感数据（密码、密钥等）
+#   x-         —— 以 "x-" 开头的自定义扩展字段，Compose 会忽略但可被引用
+#
+# services 下每个服务的常用字段：
+#   image        使用的 Docker 镜像（如 redis:8.0）
+#   container_name  容器名称（便于识别和日志查看）
+#   ports        端口映射，格式 "宿主机端口:容器端口"
+#   volumes      数据卷挂载，格式 "宿主机路径:容器路径"，用于持久化数据
+#   environment  设置容器内的环境变量
+#   command      覆盖容器默认启动命令
+#   depends_on   声明启动依赖（仅控制启动顺序，不等待健康检查通过）
+#   healthcheck  健康检查配置，定义如何判断容器是否正常运行
+#   restart      重启策略（no / always / on-failure / unless-stopped）
+#   networks     指定容器加入的网络
+#
+# 常用命令速查：
+#   docker compose up -d          后台启动所有服务
+#   docker compose down           停止并移除所有容器和网络
+#   docker compose down -v        同时移除数据卷（⚠️ 会丢失数据）
+#   docker compose ps             查看各服务运行状态
+#   docker compose logs <服务名>   查看指定服务的日志
+#   docker compose restart <服务名> 重启指定服务
+#
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # etcd：Milvus 的元数据存储
+  # --------------------------------------------------------------------------
+  # etcd 是一个分布式 KV 存储，Milvus 用它来保存集群元数据（如集合信息、
+  # 分区信息、索引状态等）。standalone 模式下 etcd 只运行单节点。
+  # --------------------------------------------------------------------------
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.18
+    environment:
+      # 自动压缩模式：按 revision 数量压缩（避免 WAL 无限增长）
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      # 保留最近 1000 个 revision，更早的自动清理
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      # 存储配额上限 4GB（达到后拒绝写入，防止磁盘被打满）
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      # 每写入 50000 条记录触发一次快照（用于故障恢复）
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # MinIO：Milvus 的对象存储后端
+  # --------------------------------------------------------------------------
+  # MinIO 是一个兼容 Amazon S3 协议的对象存储服务。Milvus 用它来持久化
+  # 向量索引文件和日志快照（类似数据库的 WAL / checkpoint）。
+  # 端口 9000 = S3 API 端口，端口 9001 = Web 管理控制台。
+  # --------------------------------------------------------------------------
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      # 默认管理员凭据（生产环境务必修改）
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    ports:
+      - "9001:9001"  # Web 管理控制台
+      - "9000:9000"  # S3 兼容 API
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # Milvus Standalone：向量数据库主服务
+  # --------------------------------------------------------------------------
+  # Milvus 是本项目的核心向量数据库，负责存储和检索文档的向量嵌入（embedding），
+  # 为 RAG（检索增强生成）提供语义搜索能力。standalone 模式将 Milvus 的所有
+  # 组件（DataNode、IndexNode、QueryNode、Proxy 等）合并到一个容器中，
+  # 适合开发和单机部署。生产环境应使用 cluster 模式拆分部署。
+  # 端口 19530 = gRPC API（应用连接用），端口 9091 = HTTP 健康检查/监控。
+  # --------------------------------------------------------------------------
+  standalone:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.5.10
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+    - seccomp:unconfined
+    environment:
+      # 指向 etcd 获取集群元数据
+      ETCD_ENDPOINTS: etcd:2379
+      # 指向 MinIO 进行对象存储
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s  # Milvus 首次启动较慢，给予 90 秒宽限期
+      timeout: 20s
+      retries: 3
+    ports:
+      - "19530:19530"  # gRPC API，应用通过此端口连接 Milvus
+      - "9091:9091"    # HTTP 端口，用于健康检查和监控
+    depends_on:
+      - "etcd"    # 必须先启动 etcd（元数据存储就绪）
+      - "minio"   # 必须先启动 MinIO（对象存储就绪）
+  # --------------------------------------------------------------------------
+  # Attu：Milvus 可视化管理工具
+  # --------------------------------------------------------------------------
+  # Attu 是 Zilliz 官方提供的 Milvus GUI 管理工具，可以在浏览器中查看集合、
+  # 浏览数据、执行查询、查看索引状态等，方便开发和调试。
+  # 访问地址：http://localhost:8000
+  # --------------------------------------------------------------------------
+  attu:
+    container_name: milvus-attu
+    image: zilliz/attu:v2.5
+    ports:
+      - "8000:3000" # 宿主机 8000 → 容器内 Attu 默认端口 3000
+    environment:
+      # 指向 Docker 内部网络中的 Milvus 服务（通过容器名解析地址）
+      MILVUS_URL: standalone:19530
+    depends_on:
+      - standalone # 确保 Milvus 先启动
+
+  # --------------------------------------------------------------------------
+  # Redis：热数据缓存 + 消息队列 + 热 Checkpoint
+  # --------------------------------------------------------------------------
+  # Redis 在本项目中承担三个角色：
+  #   1. 热 Checkpoint 存储 —— LangGraph Agent 的会话状态（TTL=7天），
+  #      读写延迟极低；Redis miss 时自动降级到 PostgreSQL 冷 Checkpoint
+  #   2. 消息队列 —— SSE 流式事件的异步缓冲
+  #   3. Token 缓存 —— LLM Token 用量统计缓存
+  # 开启 AOF（appendonly yes）保证重启后数据不丢失。
+  # --------------------------------------------------------------------------
+  redis:
+    container_name: redis
+    image: redis:8.0
+    ports:
+      - "6379:6379"
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/redis:/data
+    command: redis-server --appendonly yes  # 开启 AOF 持久化
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # PostgreSQL：冷 Checkpoint + Store + 对话历史持久化
+  # --------------------------------------------------------------------------
+  # PostgreSQL 在本项目中承担三个角色：
+  #   1. 冷 Checkpoint fallback —— 当 Redis 中的热 Checkpoint 过期或丢失时，
+  #      从 PostgreSQL 恢复 Agent 会话状态（AsyncPostgresSaver）
+  #   2. 用户画像 Store —— 存储用户偏好、历史交互等长期记忆（AsyncPostgresStore）
+  #   3. 对话历史持久化 —— 完整保存对话记录，支持历史回溯和审计
+  # --------------------------------------------------------------------------
+  postgres:
+    container_name: postgres
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres      # 生产环境务必修改
+      POSTGRES_DB: on_call_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ============================================================================
+# 网络配置
+# ============================================================================
+# 所有服务默认加入同一个自定义网络 "on_call_agent"，
+# 容器之间可通过容器名直接互相访问（如 standalone 可通过 etcd:2379 连接 etcd），
+# 无需使用 IP 地址。自定义网络（而非默认的 bridge）还自带 DNS 解析能力。
+# ============================================================================
+networks:
+  default:
+    name: on_call_agent

@@ -3,25 +3,26 @@
 主应用程序，配置路由、中间件、静态文件等
 """
 
+import os
+from contextlib import AsyncExitStack, asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from contextlib import asynccontextmanager
-import os
-
-from app.config import config
+from fastapi.staticfiles import StaticFiles
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.store.postgres import AsyncPostgresStore
 from loguru import logger
-from app.api import chat, health, file, aiops, auth, sessions
-from app.core.milvus_client import milvus_manager
-from app.core.redis_client import redis_manager
-from app.core.mysql_client import mysql_manager
-from app.services.scheduler_service import scheduled_aiops_service
-from app.services.long_term_memory_service import long_term_memory_service
+
+from app.api import aiops, auth, chat, file, health, sessions
+from app.config import config
+from app.core.manager.milvus_client import milvus_manager
+from app.core.manager.mysql_client import mysql_manager
+from app.core.manager.postgres_client import postgres_manager
+from app.core.manager.redis_client import redis_manager
 from app.services.auth_service import auth_service
-from app.services.conversation_history_service import conversation_history_service
-from app.services.message_queue_service import message_queue_service
 from app.services.conversation_session_service import conversation_session_service
+from app.services.scheduler.aiops_scheduler import scheduled_aiops_service
 
 
 @asynccontextmanager
@@ -44,57 +45,68 @@ async def lifespan(app: FastAPI):
     await redis_manager.connect()
     logger.info("✅ Redis 连接成功")
 
-    # 连接 MySQL（用于长期记忆 - 用户画像 + 用户认证）
+    # 连接 MySQL（用于用户认证 + 会话管理）
     logger.info("🔌 正在连接 MySQL...")
     await mysql_manager.connect()
     logger.info("✅ MySQL 连接成功")
 
-    # 初始化长期记忆数据库表
-    logger.info("📊 正在初始化长期记忆数据库表...")
-    await long_term_memory_service.init_db()
-    logger.info("✅ 长期记忆数据库表初始化完成")
+    # 连接 PostgreSQL（用于冷 checkpoint fallback + Store + 对话历史持久化）
+    logger.info("🔌 正在连接 PostgreSQL...")
+    await postgres_manager.connect()
+    logger.info("✅ PostgreSQL 连接成功")
 
-    # 初始化对话历史表（MySQL 持久化备份）
-    if config.conversation_history_enabled:
-        logger.info("💬 正在初始化对话历史表...")
-        await conversation_history_service.init_db()
-        logger.info("✅ 对话历史表初始化完成")
+    from app.services.rag_agent_service import rag_agent_service
 
-        # 启动消息队列消费者（异步持久化对话历史）
-        logger.info("📨 正在启动消息队列消费者...")
-        await message_queue_service.start_consumer()
-        logger.info("✅ 消息队列消费者已启动")
+    # 使用 AsyncExitStack 管理 LangGraph PostgreSQL 上下文管理器
+    # from_conn_string() 返回 asynccontextmanager，必须在整个应用生命周期内保持打开
+    async with AsyncExitStack() as stack:
+        # 初始化 LangGraph 官方 Store（长期记忆 - 用户画像，基于 PostgreSQL）
+        if config.store_enabled:
+            logger.info("📊 正在初始化 LangGraph Store（PostgreSQL）...")
+            pg_store = await stack.enter_async_context(
+                AsyncPostgresStore.from_conn_string(config.postgres_dsn)
+            )
+            await pg_store.setup()
+            rag_agent_service.store = pg_store
+            logger.info("✅ LangGraph Store 初始化完成")
 
-    # 初始化会话管理表
-    logger.info("📝 正在初始化会话管理表...")
-    await conversation_session_service.init_db()
-    logger.info("✅ 会话管理表初始化完成")
+        # 初始化冷 Checkpointer（PostgreSQL，Redis TTL 过期后 fallback）
+        if config.conversation_history_enabled:
+            logger.info("🧊 正在初始化 PostgreSQL 冷 Checkpointer...")
+            pg_saver = await stack.enter_async_context(
+                AsyncPostgresSaver.from_conn_string(config.postgres_dsn)
+            )
+            await pg_saver.setup()
+            rag_agent_service.postgres_saver = pg_saver
+            logger.info("✅ PostgreSQL 冷 Checkpointer 初始化完成")
 
-    # 初始化用户认证表并创建初始管理员
-    logger.info("🔐 正在初始化用户认证系统...")
-    await auth_service.init_db()
-    logger.info("✅ 用户认证系统初始化完成")
+        # 初始化会话管理表
+        logger.info("📝 正在初始化会话管理表...")
+        await conversation_session_service.init_db()
+        logger.info("✅ 会话管理表初始化完成")
 
-    # 启动定时 AIOps 任务
-    if config.enable_scheduled_aiops:
-        await scheduled_aiops_service.start()
+        # 初始化用户认证表并创建初始管理员
+        logger.info("🔐 正在初始化用户认证系统...")
+        await auth_service.init_db()
+        logger.info("✅ 用户认证系统初始化完成")
 
-    logger.info("=" * 60)
+        # 启动定时 AIOps 任务
+        if config.enable_scheduled_aiops:
+            await scheduled_aiops_service.start()
 
-    yield
+        logger.info("=" * 60)
 
-    # 关闭时执行
-    await scheduled_aiops_service.stop()
+        yield
 
-    # 停止消息队列消费者（优雅关闭，处理剩余消息）
-    if config.conversation_history_enabled:
-        logger.info("📨 正在停止消息队列消费者...")
-        await message_queue_service.stop_consumer()
-        logger.info("✅ 消息队列消费者已停止")
+        # 关闭时执行
+        await scheduled_aiops_service.stop()
+
+    # AsyncExitStack 退出时自动关闭 pg_store / pg_saver 的数据库连接
 
     logger.info("🔌 正在关闭连接...")
     milvus_manager.close()
     await redis_manager.close()
+    await postgres_manager.close()
     await mysql_manager.close()
     logger.info(f"👋 {config.app_name} 关闭")
 
@@ -104,7 +116,7 @@ app = FastAPI(
     title=config.app_name,
     version=config.app_version,
     description="基于 LangChain 的智能oncall运维系统",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # 配置 CORS（Cookie 模式下必须指定具体域名，不能用 "*"）
@@ -131,6 +143,7 @@ app.include_router(aiops.router, prefix="/api", tags=["AIOps智能运维"])
 static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+
 @app.get("/")
 async def root():
     """返回首页"""
@@ -140,7 +153,7 @@ async def root():
     return {
         "message": f"Welcome to {config.app_name} API",
         "version": config.app_version,
-        "docs": "/docs"
+        "docs": "/docs",
     }
 
 
@@ -155,11 +168,7 @@ async def login_page():
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
-        "app.main:app",
-        host=config.host,
-        port=config.port,
-        reload=config.debug,
-        log_level="info"
+        "app.main:app", host=config.host, port=config.port, reload=config.debug, log_level="info"
     )

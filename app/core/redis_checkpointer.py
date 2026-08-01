@@ -1,4 +1,5 @@
-"""Redis Checkpointer —— 模仿 LangGraph 官方 PostgreSQL Checkpointer 架构实现
+"""
+Redis Checkpointer —— 模仿 LangGraph 官方 PostgreSQL Checkpointer 架构实现
 
 本模块为 LangGraph 提供基于 Redis 的完整同步/异步检查点持久化存储，
 架构对标 ``langgraph.checkpoint.postgres`` 的三层设计：
@@ -228,12 +229,14 @@ class BaseRedisSaver(BaseCheckpointSaver[str]):
             write_idx = WRITES_IDX_MAP.get(channel, idx)
             field = self._write_field(checkpoint_id, task_id, write_idx)
             type_tag, raw_bytes = self.serde.dumps_typed(value)
-            fields[field] = json.dumps({
-                "channel": channel,
-                "type": type_tag,
-                "blob": base64.b64encode(raw_bytes).decode("utf-8"),
-                "task_path": task_path,
-            })
+            fields[field] = json.dumps(
+                {
+                    "channel": channel,
+                    "type": type_tag,
+                    "blob": base64.b64encode(raw_bytes).decode("utf-8"),
+                    "task_path": task_path,
+                }
+            )
         return fields
 
     def _load_writes(
@@ -250,7 +253,7 @@ class BaseRedisSaver(BaseCheckpointSaver[str]):
                 continue
             # field 格式: w:{checkpoint_id}:{task_id}:{idx}
             # 提取 task_id: 去掉 "w:{checkpoint_id}:" 前缀，再 rsplit 取第一部分
-            remainder = field[len(prefix):]
+            remainder = field[len(prefix) :]
             task_id = remainder.rsplit(":", 1)[0]
 
             try:
@@ -312,9 +315,7 @@ class BaseRedisSaver(BaseCheckpointSaver[str]):
         cp_field = self._cp_field(checkpoint_id)
         cp_type_field = self._cp_type_field(checkpoint_id)
         cp_type = hash_data.get(cp_type_field, "msgpack")
-        checkpoint = self.serde.loads_typed(
-            (cp_type, base64.b64decode(hash_data[cp_field]))
-        )
+        checkpoint = self.serde.loads_typed((cp_type, base64.b64decode(hash_data[cp_field])))
 
         # 反序列化 metadata
         meta_field = self._meta_field(checkpoint_id)
@@ -322,9 +323,7 @@ class BaseRedisSaver(BaseCheckpointSaver[str]):
         metadata = {}
         if meta_field in hash_data:
             md_type = hash_data.get(meta_type_field, "msgpack")
-            metadata = self.serde.loads_typed(
-                (md_type, base64.b64decode(hash_data[meta_field]))
-            )
+            metadata = self.serde.loads_typed((md_type, base64.b64decode(hash_data[meta_field])))
 
         # parent
         parent_field = self._cp_parent_field(checkpoint_id)
@@ -437,8 +436,11 @@ class RedisSaver(BaseRedisSaver):
         import redis as sync_redis
 
         conn = sync_redis.Redis(
-            host=host, port=port, db=db,
-            password=password or None, decode_responses=True,
+            host=host,
+            port=port,
+            db=db,
+            password=password or None,
+            decode_responses=True,
         )
         try:
             conn.ping()
@@ -476,9 +478,7 @@ class RedisSaver(BaseRedisSaver):
                 return None
             checkpoint_id = order[0]
 
-        return self._build_checkpoint_tuple(
-            hash_data, thread_id, checkpoint_ns, checkpoint_id
-        )
+        return self._build_checkpoint_tuple(hash_data, thread_id, checkpoint_ns, checkpoint_id)
 
     def list(
         self,
@@ -525,9 +525,7 @@ class RedisSaver(BaseRedisSaver):
                     if not self._metadata_matches(metadata, filter):
                         continue
 
-            yield self._build_checkpoint_tuple(
-                hash_data, thread_id, checkpoint_ns, cp_id
-            )
+            yield self._build_checkpoint_tuple(hash_data, thread_id, checkpoint_ns, cp_id)
             count += 1
 
     def put(
@@ -582,9 +580,7 @@ class RedisSaver(BaseRedisSaver):
         }
 
         # blob fields
-        if blob_versions := {
-            k: v for k, v in new_versions.items() if k in blob_values
-        }:
+        if blob_versions := {k: v for k, v in new_versions.items() if k in blob_values}:
             fields.update(self._dump_blobs(blob_values, blob_versions))
 
         # 更新 order（需要先读取当前 order）
@@ -695,8 +691,11 @@ class AsyncRedisSaver(BaseRedisSaver):
         import redis.asyncio as aioredis
 
         conn = aioredis.Redis(
-            host=host, port=port, db=db,
-            password=password or None, decode_responses=True,
+            host=host,
+            port=port,
+            db=db,
+            password=password or None,
+            decode_responses=True,
         )
         await conn.ping()
         return cls(conn, ttl=ttl, serde=serde)
@@ -729,9 +728,7 @@ class AsyncRedisSaver(BaseRedisSaver):
                 return None
             checkpoint_id = order[0]
 
-        return self._build_checkpoint_tuple(
-            hash_data, thread_id, checkpoint_ns, checkpoint_id
-        )
+        return self._build_checkpoint_tuple(hash_data, thread_id, checkpoint_ns, checkpoint_id)
 
     async def alist(
         self,
@@ -777,9 +774,7 @@ class AsyncRedisSaver(BaseRedisSaver):
                     if not self._metadata_matches(metadata, filter):
                         continue
 
-            yield self._build_checkpoint_tuple(
-                hash_data, thread_id, checkpoint_ns, cp_id
-            )
+            yield self._build_checkpoint_tuple(hash_data, thread_id, checkpoint_ns, cp_id)
             count += 1
 
     async def aput(
@@ -834,9 +829,7 @@ class AsyncRedisSaver(BaseRedisSaver):
         }
 
         # blob fields
-        if blob_versions := {
-            k: v for k, v in new_versions.items() if k in blob_values
-        }:
+        if blob_versions := {k: v for k, v in new_versions.items() if k in blob_values}:
             fields.update(self._dump_blobs(blob_values, blob_versions))
 
         # 更新 order
@@ -911,9 +904,7 @@ class AsyncRedisSaver(BaseRedisSaver):
     def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         self._check_not_main_thread("get_tuple")
         loop = self.loop or asyncio.get_event_loop()
-        return asyncio.run_coroutine_threadsafe(
-            self.aget_tuple(config), loop
-        ).result()
+        return asyncio.run_coroutine_threadsafe(self.aget_tuple(config), loop).result()
 
     def list(
         self,
@@ -929,7 +920,8 @@ class AsyncRedisSaver(BaseRedisSaver):
         while True:
             try:
                 yield asyncio.run_coroutine_threadsafe(
-                    anext(aiter_), loop,  # type: ignore[arg-type]
+                    anext(aiter_),
+                    loop,  # type: ignore[arg-type]
                 ).result()
             except StopAsyncIteration:
                 break
@@ -963,9 +955,8 @@ class AsyncRedisSaver(BaseRedisSaver):
     def delete_thread(self, thread_id: str) -> None:
         self._check_not_main_thread("delete_thread")
         loop = self.loop or asyncio.get_event_loop()
-        return asyncio.run_coroutine_threadsafe(
-            self.adelete_thread(thread_id), loop
-        ).result()
+        return asyncio.run_coroutine_threadsafe(self.adelete_thread(thread_id), loop).result()
+
 
 __all__ = [
     "BaseRedisSaver",

@@ -2,28 +2,28 @@
 通用 Plan-Execute-Replan 服务
 基于 LangGraph 官方教程实现
 """
-
+import asyncio
 from typing import AsyncGenerator, Dict, Any
+
+from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
 from loguru import logger
 from rich import print as rprint
 
 from app.agent.aiops import PlanExecuteState, planner, executor, replanner
-
+from app.core.manager.postgres_client import postgres_manager
 
 # 节点名称常量
-NODE_PLANNER = "planner"
-NODE_EXECUTOR = "executor"
-NODE_REPLANNER = "replanner"
-
+_NODE_PLANNER = "planner"
+_NODE_EXECUTOR = "executor"
+_NODE_REPLANNER = "replanner"
 
 class AIOpsService:
     """通用 Plan-Execute-Replan 服务"""
 
     def __init__(self):
         """初始化服务"""
-        self.checkpointer = MemorySaver()
+        self.checkpointer = PostgresSaver(asyncio.run(postgres_manager.connect()))
         self.graph = self._build_graph()
         logger.info("Plan-Execute-Replan Service 初始化完成")
 
@@ -37,16 +37,16 @@ class AIOpsService:
         workflow = StateGraph(PlanExecuteState)
 
         # 添加节点
-        workflow.add_node(NODE_PLANNER, planner)      # 制定计划
-        workflow.add_node(NODE_EXECUTOR, executor)  # 执行步骤
-        workflow.add_node(NODE_REPLANNER, replanner)  # 重新规划
+        workflow.add_node(_NODE_PLANNER, planner)  # 制定计划
+        workflow.add_node(_NODE_EXECUTOR, executor)  # 执行步骤
+        workflow.add_node(_NODE_REPLANNER, replanner)  # 重新规划
 
         # 设置入口点
-        workflow.set_entry_point(NODE_PLANNER)
+        workflow.set_entry_point(_NODE_PLANNER)
 
         # 定义边
-        workflow.add_edge(NODE_PLANNER, NODE_EXECUTOR)     # planner -> executor
-        workflow.add_edge(NODE_EXECUTOR, NODE_REPLANNER)   # executor -> replanner
+        workflow.add_edge(_NODE_PLANNER, _NODE_EXECUTOR)  # planner -> executor
+        workflow.add_edge(_NODE_EXECUTOR, _NODE_REPLANNER)  # executor -> replanner
 
         # replanner 的条件边
         def should_continue(state: PlanExecuteState) -> str:
@@ -60,19 +60,14 @@ class AIOpsService:
             plan = state.get("plan", [])
             if plan:
                 logger.info(f"继续执行，剩余 {len(plan)} 个步骤")
-                return NODE_EXECUTOR
+                return _NODE_EXECUTOR
 
             # 计划为空但没有响应，返回 replanner 生成响应
             logger.info("计划执行完毕，生成最终响应")
             return END
 
         workflow.add_conditional_edges(
-            NODE_REPLANNER,
-            should_continue,
-            {
-                NODE_EXECUTOR: NODE_EXECUTOR,
-                END: END
-            }
+            _NODE_REPLANNER, should_continue, {_NODE_EXECUTOR: _NODE_EXECUTOR, END: END}
         )
 
         # 编译工作流
@@ -82,9 +77,7 @@ class AIOpsService:
         return compiled_graph
 
     async def execute(
-        self,
-        user_input: str,
-        session_id: str = "default"
+        self, user_input: str, session_id: str = "default"
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         执行 Plan-Execute-Replan 流程
@@ -104,20 +97,14 @@ class AIOpsService:
                 "input": user_input,
                 "plan": [],
                 "past_steps": [],
-                "response": ""
+                "response": "",
             }
 
             # 流式执行工作流
-            config_dict = {
-                "configurable": {
-                    "thread_id": session_id
-                }
-            }
+            config_dict = {"configurable": {"thread_id": session_id}}
             # todo 使用 stream_mode="token" 实现真正的流式输出，满足前端打字机效果
             async for event in self.graph.astream(
-                input=initial_state,
-                config=config_dict,
-                stream_mode="updates"
+                input=initial_state, config=config_dict, stream_mode="updates"
             ):
                 print("================== event ==================")
                 rprint(event)
@@ -129,13 +116,13 @@ class AIOpsService:
                     logger.info(f"节点 '{node_name}' 输出事件")
 
                     # 根据节点类型生成不同的事件
-                    if node_name == NODE_PLANNER:
+                    if node_name == _NODE_PLANNER:
                         yield self._format_planner_event(node_output)
 
-                    elif node_name == NODE_EXECUTOR:
+                    elif node_name == _NODE_EXECUTOR:
                         yield self._format_executor_event(node_output)
 
-                    elif node_name == NODE_REPLANNER:
+                    elif node_name == _NODE_REPLANNER:
                         yield self._format_replanner_event(node_output)
 
             # 获取最终状态
@@ -151,23 +138,16 @@ class AIOpsService:
                 "type": "complete",
                 "stage": "complete",
                 "message": "任务执行完成",
-                "response": final_response
+                "response": final_response,
             }
 
             logger.info(f"[会话 {session_id}] 任务执行完成")
 
         except Exception as e:
             logger.error(f"[会话 {session_id}] 任务执行失败: {e}", exc_info=True)
-            yield {
-                "type": "error",
-                "stage": "error",
-                "message": f"任务执行出错: {str(e)}"
-            }
+            yield {"type": "error", "stage": "error", "message": f"任务执行出错: {str(e)}"}
 
-    async def diagnose(
-        self,
-        session_id: str = "default"
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+    async def diagnose(self, session_id: str = "default") -> AsyncGenerator[Dict[str, Any], None]:
         """
         AIOps 诊断接口（兼容旧接口）
 
@@ -179,6 +159,7 @@ class AIOpsService:
         """
         # 使用固定的 AIOps 任务描述
         from textwrap import dedent
+
         aiops_task = dedent("""诊断当前系统是否存在告警，如果存在告警请详细分析告警原因并生成诊断报告，诊断报告输出格式要求：
                 ```
                 # 告警分析报告
@@ -261,10 +242,7 @@ class AIOpsService:
                     "type": "complete",
                     "stage": "diagnosis_complete",
                     "message": "诊断流程完成",
-                    "diagnosis": {
-                        "status": "completed",
-                        "report": event.get("response", "")
-                    }
+                    "diagnosis": {"status": "completed", "report": event.get("response", "")},
                 }
             else:
                 yield event
@@ -272,11 +250,7 @@ class AIOpsService:
     def _format_planner_event(self, state: Dict | None) -> Dict:
         """格式化 Planner 节点事件"""
         if not state:
-            return {
-                "type": "status",
-                "stage": "planner",
-                "message": "规划节点执行中"
-            }
+            return {"type": "status", "stage": "planner", "message": "规划节点执行中"}
 
         plan = state.get("plan", [])
 
@@ -284,17 +258,13 @@ class AIOpsService:
             "type": "plan",
             "stage": "plan_created",
             "message": f"执行计划已制定，共 {len(plan)} 个步骤",
-            "plan": plan
+            "plan": plan,
         }
 
     def _format_executor_event(self, state: Dict | None) -> Dict:
         """格式化 Executor 节点事件"""
         if not state:
-            return {
-                "type": "status",
-                "stage": "executor",
-                "message": "执行节点运行中"
-            }
+            return {"type": "status", "stage": "executor", "message": "执行节点运行中"}
 
         plan = state.get("plan", [])
         past_steps = state.get("past_steps", [])
@@ -306,23 +276,15 @@ class AIOpsService:
                 "stage": "step_executed",
                 "message": f"步骤执行完成 ({len(past_steps)}/{len(past_steps) + len(plan)})",
                 "current_step": last_step,
-                "remaining_steps": len(plan)
+                "remaining_steps": len(plan),
             }
         else:
-            return {
-                "type": "status",
-                "stage": "executor",
-                "message": "开始执行步骤"
-            }
+            return {"type": "status", "stage": "executor", "message": "开始执行步骤"}
 
     def _format_replanner_event(self, state: Dict | None) -> Dict:
         """格式化 Replanner 节点事件"""
         if not state:
-            return {
-                "type": "status",
-                "stage": "replanner",
-                "message": "评估节点运行中"
-            }
+            return {"type": "status", "stage": "replanner", "message": "评估节点运行中"}
 
         response = state.get("response", "")
         plan = state.get("plan", [])
@@ -333,7 +295,7 @@ class AIOpsService:
                 "type": "report",
                 "stage": "final_report",
                 "message": "最终报告已生成",
-                "report": response
+                "report": response,
             }
         else:
             # 重新规划
@@ -341,7 +303,7 @@ class AIOpsService:
                 "type": "status",
                 "stage": "replanner",
                 "message": f"评估完成，{'继续执行剩余步骤' if plan else '准备生成最终响应'}",
-                "remaining_steps": len(plan)
+                "remaining_steps": len(plan),
             }
 
 

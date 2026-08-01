@@ -4,7 +4,8 @@
 """
 
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 项目根目录（config.py 在 app/ 下，所以向上取一级）
@@ -32,7 +33,9 @@ class Settings(BaseSettings):
     dashscope_api_key: str = "sk:dashscope_api_key"  # 默认空字符串，实际使用需从环境变量加载
     dashscope_model: str = "qwen-max"  # 对话模型
     dashscope_embedding_model: str = "text-embedding-v4"  # v4 支持多种维度（默认 1024）
-    dashscope_biz_space_api_base: str = "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1"  # 业务空间的 api_base_url
+    dashscope_biz_space_api_base: str = (
+        "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1"  # 业务空间的 api_base_url
+    )
     dashscope_rerank_model: str = "qwen3-rerank"  # rerank 重排模型
 
     # Milvus 配置
@@ -70,18 +73,45 @@ class Settings(BaseSettings):
     conversation_history_enabled: bool = True  # 是否启用对话历史 MySQL 持久化
     conversation_history_redis_ttl: int = 604800  # 从 MySQL 恢复到 Redis 时的 TTL，默认 7 天（秒）
 
-    # 消息队列配置（异步持久化对话历史）
-    mq_queue_key: str = "mq:conversation_history"  # Redis List key
-    mq_batch_size: int = 10  # 每批消费的消息数量
-    mq_retry_count: int = 3  # 消费失败重试次数
-    mq_fallback_log_file: str = f"{BASE_DIR}/logs/mq_fallback.jsonl"  # 兜底日志文件路径
+    # Redis 队列配置（通用基础设施）
+    redis_queue_key: str = "redis_queue:default"  # Redis List key
+    redis_queue_batch_size: int = 10  # 每批消费的消息数量
+    redis_queue_retry_count: int = 3  # 消费失败重试次数
+    redis_queue_fallback_log_file: str = (
+        f"{BASE_DIR}/logs/redis_queue_fallback.jsonl"  # 兜底日志文件路径
+    )
 
-    # MySQL 配置（用于长期记忆 - 用户画像）
+    # MySQL 配置（仅用于用户鉴权 + 会话管理）
     mysql_host: str = "localhost"
     mysql_port: int = 3306
-    mysql_db: str = "oncall_agent"
+    mysql_db: str = "on_call_agent"
     mysql_user: str = "root"
     mysql_password: str = ""
+
+    # PostgreSQL 配置（用于冷 checkpoint fallback + Store + 对话历史持久化）
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "on_call_agent"
+    postgres_user: str = "postgres"
+    postgres_password: str = "postgres"
+
+    @property
+    def postgres_dsn(self) -> str:
+        """PostgreSQL 同步 DSN（供 langgraph-checkpoint-postgres / langgraph-store-postgres 的 from_conn_string 使用）"""
+        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+
+    @property
+    def postgres_async_url(self) -> str:
+        """PostgreSQL 异步连接 URL（供 SQLAlchemy asyncpg 驱动使用）"""
+        return f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+
+    # Store 配置（LangGraph BaseStore 实现，底层已迁移至 PostgreSQL）
+    store_table_name: str = "store_items"  # Store 表名
+    store_enabled: bool = True  # 是否启用 Store（用户画像长期记忆）
+
+    # 长期记忆配置（用户画像特征提取）
+    long_term_memory_enabled: bool = True  # 是否启用长期记忆中间件
+    memory_extraction_model: str = ""  # 特征提取使用的模型，空字符串时复用主模型
 
     # JWT 认证配置
     jwt_secret_key: str = "change-me-in-production-use-a-random-string"
@@ -104,7 +134,7 @@ class Settings(BaseSettings):
     initial_admin_password: str = "admin123"
 
     @property
-    def mcp_servers(self) -> Dict[str, Dict[str, Any]]:
+    def mcp_servers(self) -> dict[str, dict[str, Any]]:
         """获取完整的 MCP 服务器配置"""
         return {
             "cls": {
@@ -114,12 +144,12 @@ class Settings(BaseSettings):
             "monitor": {
                 "transport": self.mcp_monitor_transport,
                 "url": self.mcp_monitor_url,
-            }
+            },
         }
 
 
 # 全局配置实例
 config = Settings()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print(Settings().model_config)
