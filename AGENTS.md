@@ -16,7 +16,7 @@
 | 向量库 | Milvus（`langchain-milvus` + `pymilvus`） |
 | MCP | `langchain-mcp-adapters` + `fastmcp` |
 | 日志 | **Loguru**（`from loguru import logger`，非标准 logging） |
-| 数据库 | MySQL（`aiomysql` + `SQLAlchemy`）+ Redis（checkpoint + 消息队列） |
+| 数据库 | MySQL（`aiomysql` + `SQLAlchemy`，仅鉴权+会话）+ PostgreSQL（`psycopg3` + `asyncpg`，冷 checkpoint + Store + 对话历史）+ Redis（热 checkpoint + 消息队列） |
 
 ## 常用命令
 
@@ -61,20 +61,36 @@ make upload                    # 上传 aiops-docs/*.md 到 Milvus
 - **MCP 聚合**：`agent/mcp_client.py` 用 `MultiServerMCPClient` 连接多个 MCP 服务器，`retry_interceptor` 提供指数退避重试。
 - **SSE 流式**：`/api/chat/stream` 和 `/api/aiops` 通过 `sse-starlette` 返回 JSON 事件。
 - **三级消息兜底**：Redis List → 内存队列 → 兜底日志文件（`logs/mq_fallback.jsonl`）。
-- **Redis checkpoint + MySQL 备份**：短期记忆 Redis TTL=7天，过期自动从 MySQL 恢复。
+- **双层记忆架构**：Redis（热 checkpoint，TTL=7天）+ PostgreSQL（冷 checkpoint fallback + Store + 对话历史持久化）。Redis miss 时自动从 PostgreSQL 恢复。
+- **LangGraph 官方实现**：Checkpointer 使用 `AsyncPostgresSaver`（`langgraph-checkpoint-postgres`），Store 使用 `AsyncPostgresStore`（`langgraph-store-postgres`），均通过 `from_conn_string()` 内置连接管理。
 
 两条核心路径：
-- **RAG 对话**：`chat.py` → `rag_agent_service` → LangGraph Agent → 工具调用（Milvus 检索 / MCP）→ SSE 流式 → 异步持久化 MySQL
+- **RAG 对话**：`chat.py` → `rag_agent_service` → LangGraph Agent → 工具调用（Milvus 检索 / MCP）→ SSE 流式 → MQ 异步持久化 PostgreSQL
 - **AIOps 诊断**：`aiops.py` → `aiops_service` → Plan-Execute-Replan 循环 → SSE 流式
+
+数据库职责划分：
+- **MySQL**：用户鉴权（`auth_service`）+ 会话管理（`conversation_session_service`）
+- **PostgreSQL**：冷 checkpoint fallback（`AsyncPostgresSaver`）+ 用户画像 Store（`AsyncPostgresStore`）+ 对话历史持久化（`conversation_history_service`）
+- **Redis**：热 checkpoint（`AsyncRedisSaver`）+ 消息队列 + Token 缓存
 
 ## 禁止事项
 
-- **不要**直接修改 `core/redis_checkpointer.py`、`core/milvus_client.py`、`core/mysql_client.py`，除非明确要求。
+- **不要**直接修改 `core/redis_checkpointer.py`、`core/milvus_client.py`、`core/mysql_client.py`、`core/postgres_client.py`，除非明确要求。
 - **不要**修改 MCP 服务器接口（`mcp_servers/`）而不通知。
 - **不要**使用 `pip install`，始终使用 `uv pip install`。
 - **不要**使用标准 `logging`，始终使用 `from loguru import logger`。
 - **不要**硬编码环境变量，所有配置通过 `config.py`（Pydantic Settings）从 `.env` 加载。
 - **不要**在 `app/` 下创建新的顶层包，除非讨论过。
+
+## 废弃模块
+
+以下模块已标记为 `@warnings.deprecated`，保留代码供历史参考，新代码请勿使用：
+
+| 模块 | 替代方案 |
+|------|----------|
+| `core/mysql_store.py` | `langgraph-store-postgres` 的 `AsyncPostgresStore` |
+| `services/conversation_history_service.py` | `AsyncPostgresSaver` 直接读写冷 checkpoint |
+| `services/message_queue_service.py` | 待迁移（当前底层已切 PostgreSQL） |
 
 ## 易踩坑
 
@@ -83,6 +99,7 @@ make upload                    # 上传 aiops-docs/*.md 到 Milvus
 - 虚拟环境在 `.venv/`，由 uv 管理，不要手动创建或激活其他虚拟环境。
 - `RERANK_ENABLED` 默认 `False`，启用 Rerank 需要同时在 `.env` 中配置。
 - 认证模块：`core/auth.py`（JWT 令牌处理）+ `services/auth_service.py`（业务逻辑）+ `api/auth.py`（路由），修改时需三层联动。
+- `AsyncPostgresSaver.from_conn_string()` 和 `AsyncPostgresStore.from_conn_string()` 内置连接管理，不要自建 manager 包装。
 
 ## 模块约束
 

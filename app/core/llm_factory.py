@@ -1,4 +1,5 @@
-"""LLM 工厂类
+"""
+LLM 工厂类
 
 使用 LangChain ChatOpenAI 通过 OpenAI 兼容模式调用阿里云 DashScope
 这种方式便于后续切换到其他支持 OpenAI API 的模型提供商
@@ -23,11 +24,11 @@ class LLMFactory:
 
     @staticmethod
     def create_chat_model(
-        model: str | None = None,
-        temperature: float = 0.7,
-        streaming: bool = True,
-        base_url: str | None = None,
-        api_key: str | None = None,
+            model: str | None = None,
+            temperature: float = 0.7,
+            streaming: bool = True,
+            base_url: str | None = None,
+            api_key: str | None = None,
     ) -> ChatOpenAI:
         model = model or config.dashscope_model
         base_url = base_url or LLMFactory.DASHSCOPE_BASE_URL
@@ -47,6 +48,7 @@ class LLMFactory:
         )
 
         return llm
+
 
 # 全局 LLM 工厂实例
 llm_factory = LLMFactory()

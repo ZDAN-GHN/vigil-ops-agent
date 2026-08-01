@@ -97,4 +97,5 @@ dmypy.json
 .idea/
 .vscode/
 
-
+# tests
+tests/

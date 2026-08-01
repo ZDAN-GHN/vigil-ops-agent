@@ -8,8 +8,8 @@ from typing import Optional
 
 import bcrypt
 import jwt
-from fastapi import Cookie, Depends, HTTPException, Request, Response, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Cookie, HTTPException, Request, Response, status
+from fastapi.security import HTTPBearer
 from loguru import logger
 
 from app.config import config
@@ -61,9 +61,7 @@ def create_access_token(user_id: int, username: str) -> str:
     Returns:
         str: JWT 字符串
     """
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=config.access_token_expire_minutes
-    )
+    expire = datetime.now(timezone.utc) + timedelta(minutes=config.access_token_expire_minutes)
     payload = {
         "sub": str(user_id),
         "username": username,
@@ -97,9 +95,7 @@ def verify_access_token(token: str) -> Optional[dict]:
         dict: 解码后的 payload，验证失败返回 None
     """
     try:
-        payload = jwt.decode(
-            token, config.jwt_secret_key, algorithms=[config.jwt_algorithm]
-        )
+        payload = jwt.decode(token, config.jwt_secret_key, algorithms=[config.jwt_algorithm])
 
         # 验证 token 类型
         if payload.get("type") != "access":
@@ -119,6 +115,22 @@ def verify_access_token(token: str) -> Optional[dict]:
     except jwt.InvalidTokenError as e:
         logger.warning(f"无效的 Access Token: {e}")
         return None
+
+
+def is_access_token_valid(token: str) -> bool:
+    """
+    同步检查 Access Token 是否有效（JWT 签名正确 + 未过期 + 类型/字段完整）
+
+    不检查 Redis 缓存（缓存检查需异步调用 verify_access_token_cached）。
+    用于 refresh 端点判断当前 access_token 是否仍可复用，避免无谓签发新 token。
+
+    Args:
+        token: JWT 字符串
+
+    Returns:
+        bool: 有效返回 True，无效/过期/格式错误返回 False
+    """
+    return verify_access_token(token) is not None
 
 
 async def get_current_user(
@@ -255,4 +267,4 @@ def clear_auth_cookies(response: Response) -> None:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.models.user import User  # noqa: F401
+    from app.models.entity.user import User  # noqa: F401

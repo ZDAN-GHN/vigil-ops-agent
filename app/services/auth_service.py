@@ -10,10 +10,10 @@ from loguru import logger
 from sqlalchemy import select, func
 
 from app.config import config
-from app.core.auth import hash_password, verify_password
-from app.core.mysql_client import mysql_manager
-from app.core.redis_client import redis_manager
-from app.models.user import User
+from app.core.auth_resolver import hash_password, verify_password
+from app.core.manager.mysql_client import mysql_manager
+from app.core.manager.redis_client import redis_manager
+from app.models.entity.user import User
 
 
 class AuthService:
@@ -21,7 +21,7 @@ class AuthService:
 
     async def init_db(self) -> None:
         """初始化数据库表并创建初始管理员"""
-        from app.models.user_profile import Base
+        from app.models.entity.mysql_base import Base
 
         engine = await mysql_manager.get_engine()
         async with engine.begin() as conn:
@@ -43,9 +43,7 @@ class AuthService:
             return
 
         async with mysql_manager.get_session() as session:
-            result = await session.execute(
-                select(User).where(User.username == admin_username)
-            )
+            result = await session.execute(select(User).where(User.username == admin_username))
             existing_admin = result.scalar_one_or_none()
 
             if existing_admin is None:
@@ -74,9 +72,7 @@ class AuthService:
             User: 验证成功返回用户对象，失败返回 None
         """
         async with mysql_manager.get_session() as session:
-            result = await session.execute(
-                select(User).where(User.username == username)
-            )
+            result = await session.execute(select(User).where(User.username == username))
             user = result.scalar_one_or_none()
 
             if user is None:
@@ -105,9 +101,7 @@ class AuthService:
             User: 用户对象或 None
         """
         async with mysql_manager.get_session() as session:
-            result = await session.execute(
-                select(User).where(User.id == user_id)
-            )
+            result = await session.execute(select(User).where(User.id == user_id))
             return result.scalar_one_or_none()
 
     async def get_user_by_username(self, username: str) -> Optional[User]:
@@ -121,9 +115,7 @@ class AuthService:
             User: 用户对象或 None
         """
         async with mysql_manager.get_session() as session:
-            result = await session.execute(
-                select(User).where(User.username == username)
-            )
+            result = await session.execute(select(User).where(User.username == username))
             return result.scalar_one_or_none()
 
     async def create_user(
@@ -189,9 +181,7 @@ class AuthService:
             User: 更新后的用户对象或 None
         """
         async with mysql_manager.get_session() as session:
-            result = await session.execute(
-                select(User).where(User.id == user_id)
-            )
+            result = await session.execute(select(User).where(User.id == user_id))
             user = result.scalar_one_or_none()
 
             if user is None:
@@ -226,9 +216,7 @@ class AuthService:
             bool: 是否删除成功
         """
         async with mysql_manager.get_session() as session:
-            result = await session.execute(
-                select(User).where(User.id == user_id)
-            )
+            result = await session.execute(select(User).where(User.id == user_id))
             user = result.scalar_one_or_none()
 
             if user is None:
@@ -240,9 +228,7 @@ class AuthService:
             logger.info(f"删除用户: {username} (id={user_id})")
             return True
 
-    async def list_users(
-        self, offset: int = 0, limit: int = 50
-    ) -> tuple[list[User], int]:
+    async def list_users(self, offset: int = 0, limit: int = 50) -> tuple[list[User], int]:
         """
         获取用户列表
 
@@ -255,9 +241,7 @@ class AuthService:
         """
         async with mysql_manager.get_session() as session:
             # 获取总数
-            count_result = await session.execute(
-                select(func.count()).select_from(User)
-            )
+            count_result = await session.execute(select(func.count()).select_from(User))
             total = count_result.scalar() or 0
 
             # 获取用户列表
@@ -285,9 +269,7 @@ class AuthService:
 
         await redis_client.set(token_key, str(user_id), ex=ttl)
         await redis_client.sadd(user_set_key, access_token)
-        logger.debug(
-            f"存储 access_token: user_id={user_id}, ttl={ttl}s"
-        )
+        logger.debug(f"存储 access_token: user_id={user_id}, ttl={ttl}s")
 
     async def verify_access_token_cached(self, access_token: str) -> bool:
         """
@@ -317,14 +299,18 @@ class AuthService:
         redis_client = await redis_manager.get_client()
         user_set_key = f"user_access_tokens:{user_id}"
 
-        logger.debug(f"[revoke_access] 开始清理用户 {user_id} 的 access_token，集合键: {user_set_key}")
+        logger.debug(
+            f"[revoke_access] 开始清理用户 {user_id} 的 access_token，集合键: {user_set_key}"
+        )
 
         # 获取该用户所有已缓存的 access_token
         tokens = await redis_client.smembers(user_set_key)
         logger.debug(f"[revoke_access] smembers 返回: {tokens} (类型: {type(tokens).__name__})")
 
         if not tokens:
-            logger.warning(f"[revoke_access] 用户 {user_id} 的 access_token 集合为空，无 token 可清理")
+            logger.warning(
+                f"[revoke_access] 用户 {user_id} 的 access_token 集合为空，无 token 可清理"
+            )
             return 0
 
         # 批量删除 token 缓存键
@@ -342,9 +328,7 @@ class AuthService:
 
     # ========== Refresh Token 管理 ==========
 
-    async def store_refresh_token(
-        self, refresh_token: str, user_id: int
-    ) -> None:
+    async def store_refresh_token(self, refresh_token: str, user_id: int) -> None:
         """
         存储 Refresh Token 到 Redis
 
@@ -395,14 +379,18 @@ class AuthService:
         redis_client = await redis_manager.get_client()
         user_set_key = f"user_refresh_tokens:{user_id}"
 
-        logger.debug(f"[revoke_refresh] 开始清理用户 {user_id} 的 refresh_token，集合键: {user_set_key}")
+        logger.debug(
+            f"[revoke_refresh] 开始清理用户 {user_id} 的 refresh_token，集合键: {user_set_key}"
+        )
 
         # 获取该用户所有已缓存的 refresh_token
         tokens = await redis_client.smembers(user_set_key)
         logger.debug(f"[revoke_refresh] smembers 返回: {tokens} (类型: {type(tokens).__name__})")
 
         if not tokens:
-            logger.warning(f"[revoke_refresh] 用户 {user_id} 的 refresh_token 集合为空，无 token 可清理")
+            logger.warning(
+                f"[revoke_refresh] 用户 {user_id} 的 refresh_token 集合为空，无 token 可清理"
+            )
             return 0
 
         # 批量删除 refresh_token 缓存键

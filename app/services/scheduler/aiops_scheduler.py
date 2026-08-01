@@ -27,9 +27,7 @@ class ScheduledAIOpsService:
             logger.warning("定时 AIOps 任务已在运行中")
             return
         self._task = asyncio.create_task(self._run_loop())
-        logger.info(
-            f"✅ 定时 AIOps 任务已启动，间隔 {config.scheduled_aiops_interval_seconds} 秒"
-        )
+        logger.info(f"✅ 定时 AIOps 任务已启动，间隔 {config.scheduled_aiops_interval_seconds} 秒")
 
     async def stop(self):
         """停止定时任务"""

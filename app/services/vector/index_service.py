@@ -6,8 +6,8 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
-from app.services.document_splitter_service import document_splitter_service
-from app.services.vector_store_manager import vector_store_manager
+from app.core.document_splitter import document_splitter
+from app.services.vector.store_manager import vector_store_manager
 
 
 class IndexingResult:
@@ -158,7 +158,7 @@ class VectorIndexService:
             vector_store_manager.delete_by_source(normalized_path)
 
             # 3. 使用新的文档分割器
-            documents = document_splitter_service.split_document(content, normalized_path)
+            documents = document_splitter.split_document(content, normalized_path)
             logger.info(f"文档分割完成: {file_path} -> {len(documents)} 个分片")
 
             # 4. 添加文档到向量存储

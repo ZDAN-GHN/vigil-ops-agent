@@ -2,6 +2,7 @@
 Executor 节点：执行单个步骤
 基于 LangGraph 官方教程实现
 """
+
 from textwrap import dedent
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -18,7 +19,7 @@ from .state import PlanExecuteState
 async def executor(state: PlanExecuteState) -> Dict[str, Any]:
     """
     执行节点：执行计划中的下一个步骤
-    
+
     使用 LangGraph 的 ToolNode 自动处理工具调用
     """
     logger.info("=== Executor：执行步骤 ===")
@@ -36,10 +37,7 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
 
     try:
         # 获取本地工具
-        local_tools = [
-            get_current_time,
-            retrieve_knowledge
-        ]
+        local_tools = [get_current_time, retrieve_knowledge]
 
         # 获取 MCP 工具
         mcp_client = await get_mcp_client_with_retry()
@@ -50,11 +48,7 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
         all_tools = local_tools + mcp_tools
 
         # 创建 LLM（绑定工具）
-        llm = ChatQwen(
-            model=config.rag_model,
-            api_key=config.dashscope_api_key,
-            temperature=0
-        )
+        llm = ChatQwen(model=config.rag_model, api_key=config.dashscope_api_key, temperature=0)
         llm_with_tools = llm.bind_tools(all_tools)
 
         # 创建工具节点（自动执行工具调用）
@@ -78,7 +72,7 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
                 - 执行结果要清晰、准确
                 - 专注于当前步骤，不要考虑其他任务""").strip()
             ),
-            HumanMessage(content=f"请执行以下任务: {task}")
+            HumanMessage(content=f"请执行以下任务: {task}"),
         ]
 
         # 第一步：LLM 决定是否调用工具
@@ -96,11 +90,15 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
             # 第三步：将工具结果返回给 LLM 生成最终答案
             messages.extend(tool_messages["messages"])
             final_response = await llm_with_tools.ainvoke(messages)
-            result = final_response.content if hasattr(final_response, 'content') else str(final_response)
+            result = (
+                final_response.content
+                if hasattr(final_response, "content")
+                else str(final_response)
+            )
         else:
             # 没有工具调用，直接使用 LLM 的输出
             logger.info("LLM 未调用工具，直接返回结果")
-            result = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
+            result = llm_response.content if hasattr(llm_response, "content") else str(llm_response)
 
         logger.info(f"步骤执行完成，结果长度: {len(result)}")
 

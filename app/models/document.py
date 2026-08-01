@@ -16,6 +16,7 @@ class DocumentChunk(BaseModel):
 
     class Config:
         """Pydantic 配置"""
+
         json_schema_extra = {
             "example": {
                 "content": "这是一段文档内容...",

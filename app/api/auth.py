@@ -7,15 +7,16 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from loguru import logger
 
 from app.config import config
-from app.core.auth import (
+from app.core.auth_resolver import (
     clear_auth_cookies,
     create_access_token,
     create_refresh_token,
     get_current_user,
+    is_access_token_valid,
     set_auth_cookies,
     verify_access_token,
 )
-from app.models.auth_schema import (
+from app.models.dto.auth_request import (
     LoginRequest,
     LoginResponse,
     UserCreateRequest,
@@ -23,7 +24,7 @@ from app.models.auth_schema import (
     UserListResponse,
     UserUpdateRequest,
 )
-from app.models.user import User
+from app.models.entity.user import User
 from app.services.auth_service import auth_service
 
 router = APIRouter()
@@ -54,6 +55,9 @@ async def login(request: LoginRequest, response: Response):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # 清理该用户的所有旧 token（单设备模式：新登录会使旧会话失效）
+    await auth_service.revoke_all_user_tokens(user.id)
+
     # 签发令牌
     access_token = create_access_token(user.id, user.username)
     refresh_token = create_refresh_token()
@@ -78,18 +82,24 @@ async def login(request: LoginRequest, response: Response):
 @router.post("/refresh")
 async def refresh_token(
     response: Response,
+    access_token: str | None = Cookie(default=None, alias=config.access_token_cookie_name),
     refresh_token: str | None = Cookie(default=None, alias=config.refresh_token_cookie_name),
 ):
     """刷新 Access Token
 
-    从 HttpOnly Cookie 中读取 refresh_token，签发新的 access_token 并通过 Cookie 返回。
+    仅当当前 access_token 已过期或无效时才签发新 token，避免无谓刷新。
+    从 HttpOnly Cookie 中读取 refresh_token 和 access_token：
+    - access_token 仍有效 → 直接返回成功，不签发新 token
+    - access_token 已过期/无效 → 用 refresh_token 签发新 access_token
+    - refresh_token 无效/过期 → 返回 401，前端跳转登录页
 
     Args:
         response: FastAPI 响应对象
+        access_token: 从 Cookie 中读取的 access_token
         refresh_token: 从 Cookie 中读取的 refresh_token
 
     Returns:
-        dict: 刷新结果
+        dict: 刷新结果（包含 refreshed 字段标识是否实际签发了新 token）
 
     Raises:
         HTTPException: 刷新失败时抛出 401
@@ -106,7 +116,7 @@ async def refresh_token(
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="无效的刷新令牌",
+            detail="刷新令牌已过期，请重新登录",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -118,6 +128,18 @@ async def refresh_token(
             detail="用户不存在或已禁用",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # 检查当前 access_token 是否仍然有效（JWT 未过期 + Redis 缓存存在）
+    # 若有效则直接复用，无需签发新 token
+    if access_token and is_access_token_valid(access_token):
+        token_in_redis = await auth_service.verify_access_token_cached(access_token)
+        if token_in_redis:
+            logger.debug(f"access_token 仍有效，跳过刷新: user_id={user_id}")
+            return {"message": "token 仍有效，无需刷新", "refreshed": False}
+
+    # access_token 已过期或无效，签发新 token
+    # 清理该用户所有旧的 access_token，再存入新的（防止 token 堆积）
+    await auth_service.revoke_all_user_access_tokens(user_id)
 
     # 签发新的 access_token
     new_access_token = create_access_token(user.id, user.username)
@@ -136,7 +158,7 @@ async def refresh_token(
     )
 
     logger.debug(f"已刷新 access_token: user_id={user_id}")
-    return {"message": "token 已刷新"}
+    return {"message": "token 已刷新", "refreshed": True}
 
 
 @router.post("/logout")
@@ -202,8 +224,8 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
 
 @router.post("/users", response_model=UserInfoResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
-        request: UserCreateRequest,
-        current_user: User = Depends(get_current_user),
+    request: UserCreateRequest,
+    current_user: User = Depends(get_current_user),
 ):
     """创建新用户（仅管理员）
 
@@ -240,9 +262,9 @@ async def create_user(
 
 @router.get("/users", response_model=UserListResponse)
 async def list_users(
-        offset: int = 0,
-        limit: int = 50,
-        current_user: User = Depends(get_current_user),
+    offset: int = 0,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
 ):
     """获取用户列表（仅管理员）
 
@@ -273,9 +295,9 @@ async def list_users(
 
 @router.put("/users/{user_id}", response_model=UserInfoResponse)
 async def update_user(
-        user_id: int,
-        request: UserUpdateRequest,
-        current_user: User = Depends(get_current_user),
+    user_id: int,
+    request: UserUpdateRequest,
+    current_user: User = Depends(get_current_user),
 ):
     """更新用户信息（仅管理员）
 
@@ -315,8 +337,8 @@ async def update_user(
 
 @router.delete("/users/{user_id}")
 async def delete_user(
-        user_id: int,
-        current_user: User = Depends(get_current_user),
+    user_id: int,
+    current_user: User = Depends(get_current_user),
 ):
     """删除用户（仅管理员）
 

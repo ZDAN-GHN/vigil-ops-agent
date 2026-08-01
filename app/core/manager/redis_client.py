@@ -1,4 +1,5 @@
-"""Redis 客户端工厂模块
+"""
+Redis 客户端工厂模块
 
 提供异步 Redis 连接管理，用于存储会话 checkpoint 等短期记忆数据。
 """
@@ -95,7 +96,7 @@ class RedisClientManager:
 # 全局单例
 redis_manager = RedisClientManager()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import asyncio
 
     try:

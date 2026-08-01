@@ -18,8 +18,8 @@ from typing import Optional
 from loguru import logger
 from sqlalchemy import select, update, func
 
-from app.core.mysql_client import mysql_manager
-from app.models.conversation_session import ConversationSession
+from app.core.manager.mysql_client import mysql_manager
+from app.models.entity.conversation_session import ConversationSession
 
 
 class ConversationSessionService:
@@ -30,11 +30,11 @@ class ConversationSessionService:
 
     async def init_db(self) -> None:
         """初始化数据库表（创建 conversation_sessions 表）"""
-        from app.models.user_profile import Base as UserProfileBase
+        from app.models.entity.mysql_base import Base
 
         engine = await mysql_manager.get_engine()
         async with engine.begin() as conn:
-            await conn.run_sync(UserProfileBase.metadata.create_all)
+            await conn.run_sync(Base.metadata.create_all)
         logger.info("会话管理数据库表初始化完成")
 
     async def create_session(
@@ -62,9 +62,7 @@ class ConversationSessionService:
             async with mysql_manager.get_session() as session:
                 # 检查是否已存在
                 result = await session.execute(
-                    select(ConversationSession).where(
-                        ConversationSession.session_id == session_id
-                    )
+                    select(ConversationSession).where(ConversationSession.session_id == session_id)
                 )
                 existing = result.scalar_one_or_none()
                 if existing:
@@ -84,9 +82,7 @@ class ConversationSessionService:
                 await session.refresh(new_session)
                 session.expunge(new_session)
 
-                logger.info(
-                    f"创建新会话: session_id={session_id}, user_id={user_id}"
-                )
+                logger.info(f"创建新会话: session_id={session_id}, user_id={user_id}")
                 return new_session
 
         except Exception as e:
@@ -280,17 +276,13 @@ class ConversationSessionService:
                         ConversationSession.session_id == session_id,
                         ConversationSession.is_deleted == False,  # noqa: E712
                     )
-                    .values(
-                        message_count=ConversationSession.message_count + count
-                    )
+                    .values(message_count=ConversationSession.message_count + count)
                 )
                 await session.flush()
                 return result.rowcount > 0
 
         except Exception as e:
-            logger.error(
-                f"增加消息计数失败: session_id={session_id}, 错误: {e}"
-            )
+            logger.error(f"增加消息计数失败: session_id={session_id}, 错误: {e}")
             return False
 
     async def ensure_session_exists(

@@ -9,18 +9,15 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     """对话请求"""
-    
-    session_id: Optional[str] = Field(None, description="会话 ID（可选，为空时后端自动生成）", alias="Id")
+
+    session_id: Optional[str] = Field(
+        None, description="会话 ID（可选，为空时后端自动生成）", alias="Id"
+    )
     question: str = Field(..., description="用户问题", alias="Question")
 
     class Config:
         populate_by_name = True
-        json_schema_extra = {
-            "example": {
-                "Id": "session-123",
-                "Question": "什么是向量数据库？"
-            }
-        }
+        json_schema_extra = {"example": {"Id": "session-123", "Question": "什么是向量数据库？"}}
 
 
 class ClearRequest(BaseModel):

@@ -35,7 +35,7 @@
 ```bash
 # 1. 克隆项目
 git clone <repository_url>
-cd super_biz_agent_py
+cd on_call_agent
 
 # 2. 安装依赖（推荐使用 uv）
 # 方式 1: 使用 uv（推荐，更快）
@@ -374,10 +374,10 @@ type .env | findstr DASHSCOPE_API_KEY  # Windows
 docker ps | grep milvus
 
 # 重启 Milvus（使用 docker compose）
-docker compose -f vector-database.yml restart
+docker compose -f docker_compose.yml restart
 
 # 或者重启单个服务
-docker compose -f vector-database.yml restart standalone
+docker compose -f docker_compose.yml restart standalone
 ```
 
 ### 服务无法启动

@@ -19,6 +19,7 @@ from .utils import format_tools_description
 
 class Plan(BaseModel):
     """计划的输出格式"""
+
     steps: List[str] = Field(
         description="完成任务所需的不同步骤。这些步骤应该按顺序执行，每一步都建立在前一步的基础上。"
     )
@@ -91,10 +92,7 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
 
         # 步骤2: 获取可用工具列表
         # 获取本地工具
-        local_tools = [
-            get_current_time,
-            retrieve_knowledge
-        ]
+        local_tools = [get_current_time, retrieve_knowledge]
 
         # 获取 MCP 工具
         mcp_client = await get_mcp_client_with_retry()
@@ -122,21 +120,19 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
             experience_context = ""
 
         # 步骤4: 创建 LLM 并生成计划
-        llm = ChatQwen(
-            model=config.rag_model,
-            api_key=config.dashscope_api_key,
-            temperature=0
-        )
+        llm = ChatQwen(model=config.rag_model, api_key=config.dashscope_api_key, temperature=0)
 
         # LangChain 的结构化输出默认就是通过伪工具调用实现，不用显式指定 method="function_calling"
         planner_chain = planner_prompt | llm.with_structured_output(Plan)
 
         # 调用 LLM 生成计划
-        plan_result = await planner_chain.ainvoke({
-            "messages": [("user", input_text)],
-            "tools_description": tools_description,
-            "experience_context": experience_context
-        })
+        plan_result = await planner_chain.ainvoke(
+            {
+                "messages": [("user", input_text)],
+                "tools_description": tools_description,
+                "experience_context": experience_context,
+            }
+        )
 
         # 提取步骤列表
         if isinstance(plan_result, Plan):
@@ -154,10 +150,4 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"生成计划失败: {e}", exc_info=True)
         # 返回一个默认计划
-        return {
-            "plan": [
-                "收集相关信息",
-                "分析数据",
-                "生成报告"
-            ]
-        }
+        return {"plan": ["收集相关信息", "分析数据", "生成报告"]}

@@ -1,4 +1,5 @@
-"""MySQL 客户端工厂模块
+"""
+MySQL 客户端工厂模块
 
 提供异步 MySQL 连接管理，使用 SQLAlchemy AsyncEngine。
 用于存储长期记忆数据，如用户画像。
@@ -48,7 +49,9 @@ class MySQLClientManager:
                 f"?charset=utf8mb4"
             )
 
-            logger.info(f"正在连接到 MySQL: {config.mysql_host}:{config.mysql_port}/{config.mysql_db}")
+            logger.info(
+                f"正在连接到 MySQL: {config.mysql_host}:{config.mysql_port}/{config.mysql_db}"
+            )
 
             self._engine = create_async_engine(
                 db_url,
@@ -56,7 +59,7 @@ class MySQLClientManager:
                 pool_size=10,
                 max_overflow=20,
                 pool_pre_ping=True,  # 连接前自动 ping 检测
-                pool_recycle=3600,   # 1 小时回收连接，避免 MySQL 8 小时超时
+                pool_recycle=3600,  # 1 小时回收连接，避免 MySQL 8 小时超时
             )
 
             self._session_factory = async_sessionmaker(
@@ -67,9 +70,7 @@ class MySQLClientManager:
 
             # 验证连接
             async with self._engine.connect() as conn:
-                await conn.execute(
-                    __import__("sqlalchemy").text("SELECT 1")
-                )
+                await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
 
             logger.info("成功连接到 MySQL")
             return self._engine
@@ -125,6 +126,7 @@ class MySQLClientManager:
             engine = await self.get_engine()
             async with engine.connect() as conn:
                 import sqlalchemy
+
                 await conn.execute(sqlalchemy.text("SELECT 1"))
             return True
         except Exception as e:
@@ -147,11 +149,15 @@ class MySQLClientManager:
 # 全局单例
 mysql_manager = MySQLClientManager()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import asyncio
+
+
     async def test_manager():
         await mysql_manager.connect()
+
+
     try:
         asyncio.run(test_manager())
-    except Exception as ex :
+    except Exception as ex:
         print(ex)

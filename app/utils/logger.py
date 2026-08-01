@@ -35,7 +35,7 @@ def setup_logger():
     log_dir = BASE_DIR / "logs" / "logger"
     log_dir.mkdir(parents=True, exist_ok=True)
     logger.add(
-        str(log_dir /  "app_{time:YYYY-MM-DD}.log"),
+        str(log_dir / "app_{time:YYYY-MM-DD}.log"),
         rotation="00:00",  # 每天0点自动切割新日志文件
         retention="7 days",  # 仅保留最近7天的日志
         compression="zip",  # 过期日志自动压缩为zip
@@ -46,5 +46,6 @@ def setup_logger():
         level="INFO",
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {module}.{function}:{line} | {message}",
     )
+
 
 setup_logger()

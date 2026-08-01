@@ -10,7 +10,7 @@ from loguru import logger
 from app.config import config
 
 
-class DocumentSplitterService:
+class DocumentSplitter:
     """文档分割服务 - 使用 LangChain 的分割器"""
 
     def __init__(self):
@@ -131,9 +131,7 @@ class DocumentSplitterService:
         else:
             return self.split_text(content, file_path)
 
-    def _merge_small_chunks(
-        self, documents: List[Document], min_size: int = 300
-    ) -> List[Document]:
+    def _merge_small_chunks(self, documents: List[Document], min_size: int = 300) -> List[Document]:
         """
         合并太小的分片
 
@@ -173,4 +171,4 @@ class DocumentSplitterService:
 
 
 # 全局单例
-document_splitter_service = DocumentSplitterService()
+document_splitter = DocumentSplitter()

@@ -12,7 +12,7 @@ from typing import List
 from langchain_core.documents import Document
 from loguru import logger
 
-from app.services.vector_store_manager import vector_store_manager
+from app.services.vector.store_manager import vector_store_manager
 
 
 class VectorSearchService:
@@ -30,11 +30,7 @@ class VectorSearchService:
         logger.info("向量检索服务初始化完成")
 
     def search(
-            self,
-            query: str,
-            top_k: int = 5,
-            rerank: bool = True,
-            candidate_count: int = 50
+            self, query: str, top_k: int = 5, rerank: bool = True, candidate_count: int = 50
     ) -> List[Document]:
         """
         搜索相似文档（两阶段检索：粗排 + Rerank 精排）
@@ -61,10 +57,7 @@ class VectorSearchService:
         try:
             # 确定召回数量：启用 rerank 时召回更多候选，否则直接取 top_k
             if rerank:
-                recall_count = min(
-                    top_k * 10,
-                    candidate_count
-                )
+                recall_count = min(top_k * 10, candidate_count)
             else:
                 recall_count = top_k
 
@@ -114,7 +107,7 @@ class VectorSearchService:
         Returns:
             List[Document]: 精排后的文档列表，score 存储在 metadata["score"] 中
         """
-        from app.services.vector_rerank_service import vector_rerank_service
+        from app.services.vector.rerank_service import vector_rerank_service
 
         # 提取文档文本
         texts = [doc.page_content for doc in candidates]

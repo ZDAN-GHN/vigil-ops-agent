@@ -1,14 +1,12 @@
 """文件上传接口模块"""
 
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.config import BASE_DIR
-from app.models.user import User
-from app.core.auth import get_current_user
-from app.services.vector_index_service import vector_index_service
+from app.models.entity.user import User
+from app.core.auth_resolver import get_current_user
+from app.services.vector.index_service import vector_index_service
 from loguru import logger
 
 router = APIRouter()
@@ -67,7 +65,9 @@ async def upload_file(
 
         # 验证文件大小
         if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail=f"文件大小超过限制（最大 {MAX_FILE_SIZE} 字节）")
+            raise HTTPException(
+                status_code=400, detail=f"文件大小超过限制（最大 {MAX_FILE_SIZE} 字节）"
+            )
 
         file_path.write_bytes(content)
 
@@ -166,6 +166,6 @@ def _sanitize_filename(filename: str) -> str:
     # 去除空格
     sanitized = filename.replace(" ", "_")
     # 去除其他可能导致问题的字符
-    for char in ['\\', '/', ':', '*', '?', '"', '<', '>', '|']:
+    for char in ["\\", "/", ":", "*", "?", '"', "<", ">", "|"]:
         sanitized = sanitized.replace(char, "_")
     return sanitized

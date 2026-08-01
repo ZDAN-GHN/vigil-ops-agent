@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.user_profile import Base
+from app.models.entity.mysql_base import Base
 
 
 class User(Base):

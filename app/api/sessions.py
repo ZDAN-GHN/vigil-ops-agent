@@ -6,14 +6,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
 
-from app.core.auth import get_current_user
-from app.models.request import CreateSessionRequest, UpdateSessionRequest
-from app.models.response import (
+from app.core.auth_resolver import get_current_user
+from app.models.dto.chat_request import CreateSessionRequest, UpdateSessionRequest
+from app.models.dto.response import (
     SessionListResponse,
     SessionResponse,
     ApiResponse,
 )
-from app.models.user import User
+from app.models.entity.user import User
 from app.services.conversation_session_service import conversation_session_service
 
 router = APIRouter()
