@@ -81,6 +81,10 @@ dmypy.json
 # qoder
 .qoderignore
 
+# agents
+.agents/
+skills-lock.json
+
 # Pi agent
 .pi/
 

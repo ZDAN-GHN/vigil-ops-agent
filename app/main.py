@@ -135,9 +135,9 @@ app.add_middleware(
 app.include_router(health.router, tags=["健康检查"])
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(chat.router, prefix="/api/chat", tags=["对话"])
-app.include_router(sessions.router, prefix="/api", tags=["会话管理"])
+app.include_router(sessions.router, prefix="/api/sessions", tags=["会话管理"])
 app.include_router(file.router, prefix="/api/file", tags=["文件管理"])
-app.include_router(aiops.router, prefix="/api", tags=["AIOps智能运维"])
+app.include_router(aiops.router, prefix="/api/aiops", tags=["AIOps智能运维"])
 
 # 挂载静态文件
 static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")

@@ -15,7 +15,7 @@ from app.services.aiops_service import aiops_service
 router = APIRouter()
 
 
-@router.post("/aiops")
+@router.post("/")
 async def diagnose_stream(request: AIOpsRequest, current_user: User = Depends(get_current_user)):
     """
     AIOps 故障诊断接口（流式 SSE）

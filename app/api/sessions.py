@@ -19,7 +19,7 @@ from app.services.conversation_session_service import conversation_session_servi
 router = APIRouter()
 
 
-@router.get("/sessions", response_model=SessionListResponse)
+@router.get("/", response_model=SessionListResponse)
 async def list_sessions(
     offset: int = Query(0, ge=0, description="偏移量"),
     limit: int = Query(20, ge=1, le=100, description="每页数量"),
@@ -63,7 +63,7 @@ async def list_sessions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/sessions", response_model=SessionResponse)
+@router.post("/", response_model=SessionResponse)
 async def create_session(
     request: CreateSessionRequest,
     current_user: User = Depends(get_current_user),
@@ -97,7 +97,7 @@ async def create_session(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/sessions/{session_id}", response_model=SessionResponse)
+@router.get("/{session_id}", response_model=SessionResponse)
 async def get_session(
     session_id: str,
     current_user: User = Depends(get_current_user),
@@ -135,7 +135,7 @@ async def get_session(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/sessions/{session_id}", response_model=SessionResponse)
+@router.put("/{session_id}", response_model=SessionResponse)
 async def update_session(
     session_id: str,
     request: UpdateSessionRequest,
@@ -176,7 +176,7 @@ async def update_session(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/sessions/{session_id}", response_model=ApiResponse)
+@router.delete("/{session_id}", response_model=ApiResponse)
 async def delete_session(
     session_id: str,
     current_user: User = Depends(get_current_user),

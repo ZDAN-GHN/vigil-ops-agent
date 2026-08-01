@@ -67,15 +67,35 @@ class AuthManager {
 
     /**
      * 登出
+     * @returns {Promise<{success: boolean, error?: string}>} 登出结果
      */
     async logout() {
         try {
-            await fetch(`${this.apiBaseUrl}/logout`, {
+            const response = await fetch(`${this.apiBaseUrl}/logout`, {
                 method: 'POST',
                 credentials: 'include',  // 自动携带 Cookie
             });
+
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                console.error('登出失败:', error);
+                // 仍然清除本地状态并跳转，但返回失败信息
+                this.clearUser();
+                this.tokenObtainedAt = 0;
+                return {
+                    success: false,
+                    error: error.detail || '退出登录失败，请稍后重试'
+                };
+            }
         } catch (error) {
             console.error('登出请求失败:', error);
+            // 网络异常时仍清除本地状态并跳转，但返回失败信息
+            this.clearUser();
+            this.tokenObtainedAt = 0;
+            return {
+                success: false,
+                error: '网络连接异常，退出登录失败'
+            };
         }
 
         // 清除本地用户信息
@@ -84,8 +104,7 @@ class AuthManager {
         // 重置 token 时间戳
         this.tokenObtainedAt = 0;
 
-        // 跳转到登录页
-        window.location.href = '/login';
+        return { success: true };
     }
 
     /**

@@ -157,9 +157,18 @@ class OnCallAgentApp {
         // 登出按钮
         this.logoutBtn = document.getElementById('logoutBtn');
         if (this.logoutBtn) {
-            this.logoutBtn.addEventListener('click', () => {
+            this.logoutBtn.addEventListener('click', async () => {
                 if (typeof authManager !== 'undefined') {
-                    authManager.logout();
+                    const result = await authManager.logout();
+                    if (result.success) {
+                        this.showNotification('退出登录成功', 'success');
+                    } else {
+                        this.showNotification(result.error || '退出登录失败', 'error');
+                    }
+                    // 短暂延迟后跳转，让用户看到提示
+                    setTimeout(() => {
+                        window.location.href = '/login';
+                    }, 1000);
                 } else {
                     window.location.href = '/login';
                 }
