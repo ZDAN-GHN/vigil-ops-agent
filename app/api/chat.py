@@ -69,11 +69,15 @@ async def chat(request: ChatRequest, current_user: User = Depends(get_current_us
 
         logger.info(f"[会话 {session_id}] 收到快速对话请求: {request.question}")
 
-        answer = await rag_agent_service.query(
+        result = await rag_agent_service.query(
             request.question,
             session_id=session_id,
             user_id=str(current_user.id),
         )
+
+        # query() 返回 dict: {"answer": ..., "session_id": ...}
+        answer = result.get("answer", "")
+        result_session_id = result.get("session_id", session_id)
 
         # 增加消息计数（用户提问 + AI 回答 = 2 条）
         await conversation_session_service.increment_message_count(
@@ -89,7 +93,7 @@ async def chat(request: ChatRequest, current_user: User = Depends(get_current_us
             "data": {
                 "success": True,
                 "answer": answer,
-                "session_id": session_id,
+                "session_id": result_session_id,
                 "errorMessage": None,
             },
         }

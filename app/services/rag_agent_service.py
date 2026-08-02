@@ -35,13 +35,40 @@ from app.core.feature_extraction_middleware import FeatureExtractionMiddleware
 from app.core.redis_checkpointer import AsyncRedisSaver
 from app.services.long_term_memory_service import long_term_memory_service
 from app.tools import get_current_time, retrieve_knowledge
-from app.utils.decorator import i_aafter
+from app.utils.func_hooks import HookContext, hooks_before_func, hooks_after_func
 from app.utils.redis_queue import RedisQueue  # noqa: E402
 
 
 # 阿里千问大模型和langchain集成参考： https://docs.langchain.com/oss/python/integrations/chat/qwen
 # 注意：需要配置环境变量 DASHSCOPE_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1 否则默认访问的是新加坡站点
 # 同时也需要配置环境变量 DASHSCOPE_API_KEY=your_api_key
+
+
+# ── Hook 函数（供新 hooks API 使用）──────────────────────────
+
+
+async def _ensure_agent_initialized(ctx: HookContext) -> None:
+    """Before hook：确保 Agent 已初始化
+
+    替代旧 func_hooks.i_abefore_func("_initialize_agent")。
+    """
+    await ctx.instance._initialize_agent()
+
+
+async def _persist_checkpoint_after(ctx: HookContext) -> None:
+    """Before hook：调度 checkpoint 持久化后台任务
+
+    替代旧 func_hooks.i_aafter_func("_persist_checkpoint", True)。
+    在目标方法执行前创建后台任务，目标方法执行期间/返回后
+    后台任务自动将 checkpoint 持久化到 PostgreSQL。
+    """
+    session_id = ctx.kwargs.get("session_id")
+    if not session_id and len(ctx.args) >= 2:
+        session_id = ctx.args[1]
+    if session_id:
+        asyncio.create_task(ctx.instance._persist_checkpoint({"session_id": session_id}))
+
+
 class AgentState(TypedDict):
     """Agent 状态"""
 
@@ -295,9 +322,7 @@ class RagAgentService:
             return
 
         if self._aredis_saver is None:
-            logger.info(
-                f"[会话 {session_id}] Redis checkpoint 不存在"
-            )
+            logger.info(f"[会话 {session_id}] Redis checkpoint 不存在")
             return
 
         # 检查 Redis 中是否已有 checkpoint
@@ -335,16 +360,29 @@ class RagAgentService:
             f"(TTL={config.conversation_history_redis_ttl}s)"
         )
 
-    async def _persist_checkpoint(self, session_id: str, async_: bool = True) -> None:
+    async def _persist_checkpoint(self, data: str | dict, async_: bool = True) -> None:
         """将 Redis checkpoint 持久化到 PostgreSQL 冷存储
 
         优先通过 Redis 消息队列异步持久化（由后台消费者处理），
         入队失败时降级为直接写入 PostgreSQL。
 
+        可作为 hook_before 后台任务的回调：
+        - 从 ctx.args/ctx.kwargs 中提取 session_id
+        - 通过 asyncio.create_task 异步执行持久化
+
         Args:
-            session_id: 会话 ID
+            data: 会话 ID（str）或包含 session_id 键的字典（dict）
             async_: 降级直接写 PG 时是否异步执行，默认为 True
         """
+        # 从 dict 中提取 session_id（兼容 hook 回调传入 dict 的场景）
+        if isinstance(data, dict):
+            session_id = data.get("session_id")
+            if not session_id:
+                logger.warning(f"持久化钩子收到无 session_id 的 dict: {data}")
+                return
+        else:
+            session_id = data
+
         if not config.conversation_history_enabled:
             return
 
@@ -357,9 +395,7 @@ class RagAgentService:
             if enqueued:
                 return
             # 入队失败，降级为直接写 PG
-            logger.warning(
-                f"[会话 {session_id}] 消息队列入队失败，降级为直接持久化到 PostgreSQL"
-            )
+            logger.warning(f"[会话 {session_id}] 消息队列入队失败，降级为直接持久化到 PostgreSQL")
 
         # 降级：直接写入 PostgreSQL
         if async_:
@@ -399,9 +435,7 @@ class RagAgentService:
             return
 
         if self._apostgres_saver is None:
-            logger.warning(
-                f"[会话 {session_id}] PostgreSQL 冷存储未初始化，跳过 MQ 持久化"
-            )
+            logger.warning(f"[会话 {session_id}] PostgreSQL 冷存储未初始化，跳过 MQ 持久化")
             return
 
         await self._do_persist_to_postgres(session_id)
@@ -472,19 +506,16 @@ class RagAgentService:
 
     # region 业务方法
 
-    # region 装饰器
-
-    _aafter_initialize_agent = i_aafter("_initialize_agent")
-
     # endregion
 
-    @_aafter_initialize_agent
+    @hooks_after_func(_persist_checkpoint_after)
+    @hooks_before_func(_ensure_agent_initialized)
     async def query(
             self,
             question: str,
             session_id: str,
             user_id: str | None = None,
-    ) -> str:
+    ) -> dict[str, str]:
         """
         非流式处理用户问题（一次性返回完整答案）
 
@@ -494,7 +525,7 @@ class RagAgentService:
             user_id: 用户 ID（可选，用于长期记忆）
 
         Returns:
-            str: 完整答案
+            dict: 包含 answer 和 session_id 的字典
         """
         try:
             # 确保 Redis checkpoint 存在（若过期则从 MySQL 恢复）
@@ -520,20 +551,17 @@ class RagAgentService:
                 context=AgentContext(user_id=str(user_id) if user_id else None),
             )
 
-            # 异步持久化到 PostgreSQL 冷存储（不阻塞主流程）
-            await self._persist_checkpoint(session_id, async_=True)
-
             # 提取最终答案
             messages_result = result.get("messages", [])
             if messages_result:
                 # 从后往前查找第一个非摘要消息
                 answer = ""
                 for msg in reversed(messages_result):
-
                     # 跳过摘要消息（由 SummarizationMiddleware 注入，不应显示在前端）
                     if (
                             isinstance(msg, HumanMessage)
-                            and getattr(msg, "additional_kwargs", {}).get("lc_source") == "summarization"
+                            and getattr(msg, "additional_kwargs", {}).get("lc_source")
+                            == "summarization"
                     ):
                         logger.info(f"[会话 {session_id}] 跳过摘要消息")
                         continue
@@ -547,16 +575,17 @@ class RagAgentService:
                     break
 
                 logger.info(f"[会话 {session_id}] RAG Agent 查询完成（非流式）")
-                return answer
+                return {"session_id": session_id, "answer": answer}
 
             logger.warning(f"[会话 {session_id}] Agent 返回结果为空")
-            return ""
+            return {"session_id": session_id, "answer": ""}
 
         except Exception as e:
             self._log_exception_group(f"[会话 {session_id}] RAG Agent 查询失败（非流式）", e)
             raise
 
-    @_aafter_initialize_agent
+    @hooks_after_func(_persist_checkpoint_after)
+    @hooks_before_func(_ensure_agent_initialized)
     async def query_stream(
             self,
             question: str,
@@ -605,7 +634,7 @@ class RagAgentService:
                 if isinstance(metadata, dict):
                     # 检查是否是摘要中间件的输出（通过 metadata 中的节点名称判断）
                     # 获取节点名
-                    node_name = (metadata.get("langgraph_node") or "")
+                    node_name = metadata.get("langgraph_node") or ""
                     logger.info(f"接收来自{node_name}节点的消息，元数据:{metadata}")
                     # 摘要中间件的节点名形如：SummarizationMiddleware.before_model
                     if node_name.startswith("SummarizationMiddleware"):
@@ -629,9 +658,8 @@ class RagAgentService:
                     continue
 
                 # 跳过模型思考消息
-                if (
-                        isinstance(token, AIMessage | AIMessageChunk)
-                        and "reasoning_content" in getattr(token, "additional_kwargs", {})
+                if isinstance(token, AIMessage | AIMessageChunk) and "reasoning_content" in getattr(
+                        token, "additional_kwargs", {}
                 ):
                     logger.debug(f"[会话 {session_id}] 跳过思考过程")
                     continue
@@ -646,23 +674,21 @@ class RagAgentService:
                             text_content = block.get("text", "")
                             if text_content:
                                 yield {
+                                    "session_id": session_id,
                                     "type": "content",
                                     "data": text_content,
                                     "node": node_name,
                                 }
 
-            # 流式完成后，异步持久化到 PostgreSQL 冷存储（不阻塞主流程）
-            await self._persist_checkpoint(session_id, async_=True)
-
             logger.info(f"[会话 {session_id}] RAG Agent 查询完成（流式）")
-            yield {"type": "complete"}
+            yield {"session_id": session_id, "type": "complete"}
 
         except Exception as e:
             self._log_exception_group(f"[会话 {session_id}] RAG Agent 查询失败（流式）", e)
-            yield {"type": "error", "data": str(e)}
+            yield {"session_id": session_id, "type": "error", "data": str(e)}
             raise
 
-    @_aafter_initialize_agent
+    @hooks_before_func(_ensure_agent_initialized)
     async def get_chat_history(self, session_id: str) -> list:
         """
         获取会话历史（优先从 Redis checkpointer 读取，Redis 无数据时从 PostgreSQL 加载）
@@ -839,14 +865,12 @@ class RagAgentService:
 
         self._persistence_queue = RedisQueue(
             queue_key="rq:oc:rag:ckp",  # 消息队列键名
-            batch_size=10,  # 消费者单次消费数
+            batch_size=0,  # 消费者单次消费数
             retry_count=3,  # 消费失败重试次数,
             max_queue_size=1000,  # 队列最大深度，超过则降级直接写 PG
             blpop_timeout=5,  # BLPOP 阻塞超时（秒），0 表示永久阻塞
         )
-        await self._persistence_queue.start_consumer(
-            self._checkpoint_persistence_handler
-        )
+        await self._persistence_queue.start_consumer(self._checkpoint_persistence_handler)
         logger.info("Checkpoint 持久化消费者已启动（BLPOP 模式）")
 
     async def stop_persistence_consumer(self) -> None:
