@@ -182,7 +182,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres      # 生产环境务必修改
-      POSTGRES_DB: on_call_agent
+      POSTGRES_DB: vigil_ops_agent
     ports:
       - "5432:5432"
     volumes:
@@ -196,10 +196,10 @@ services:
 # ============================================================================
 # 网络配置
 # ============================================================================
-# 所有服务默认加入同一个自定义网络 "on_call_agent"，
+# 所有服务默认加入同一个自定义网络 "vigil_ops_agent"，
 # 容器之间可通过容器名直接互相访问（如 standalone 可通过 etcd:2379 连接 etcd），
 # 无需使用 IP 地址。自定义网络（而非默认的 bridge）还自带 DNS 解析能力。
 # ============================================================================
 networks:
   default:
-    name: on_call_agent
+    name: vigil_ops_agent

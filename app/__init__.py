@@ -1,4 +1,4 @@
-"""OnCallAgent Python 版本
+"""VigilOpsAgent Python 版本
 
 基于 LangChain 的智能业务代理系统
 """

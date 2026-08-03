@@ -1,5 +1,5 @@
 /**
- * OnCallAgent 前端应用 — 主编排模块
+ * VigilOpsAgent 前端应用 — 主编排模块
  * 负责应用初始化、事件绑定、UI 状态管理，并将功能委托到各子模块
  *
  * 模块依赖（通过 <script> 标签顺序加载，全局工厂函数可用）：
@@ -13,8 +13,8 @@
  *   auth.js       → AuthManager / authManager（已有）
  */
 
-// OnCallAgent 前端应用
-class OnCallAgentApp {
+// VigilOpsAgent 前端应用
+class VigilOpsAgentApp {
     constructor() {
         // 认证检查
         if (typeof authManager !== 'undefined') {
@@ -521,5 +521,5 @@ class OnCallAgentApp {
 
 // 初始化应用
 document.addEventListener('DOMContentLoaded', () => {
-    new OnCallAgentApp();
+    new VigilOpsAgentApp();
 });

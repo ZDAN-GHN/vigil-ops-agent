@@ -1,5 +1,5 @@
 -- =====================================================
--- OnCallAgent 数据库初始化脚本
+-- VigilOpsAgent 数据库初始化脚本
 -- =====================================================
 -- 用途：创建应用所需的数据库和表结构
 -- 数据库：MySQL 8.0+
@@ -12,16 +12,16 @@
 -- 注意：
 --   1. 所有 CREATE 语句使用 IF NOT EXISTS，可重复执行
 --   2. 应用启动时也会通过 SQLAlchemy 自动建表，此脚本用于手动初始化或 DBA 审核
---   3. 数据库名默认 on_call_agent，与 .env 中 MYSQL_DB 配置一致
+--   3. 数据库名默认 vigil_ops_agent，与 .env 中 MYSQL_DB 配置一致
 -- =====================================================
 
 -- 创建数据库（如果不存在）
-CREATE DATABASE IF NOT EXISTS `on_call_agent`
+CREATE DATABASE IF NOT EXISTS `vigil_ops_agent`
     DEFAULT CHARACTER SET utf8mb4
     DEFAULT COLLATE utf8mb4_unicode_ci;
 
 -- 切换到目标数据库
-USE `on_call_agent`;
+USE `vigil_ops_agent`;
 
 -- =====================================================
 -- 表1: users - 用户认证表

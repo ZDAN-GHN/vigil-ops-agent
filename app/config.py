@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     )
 
     # 应用配置
-    app_name: str = "OnCallAgent"
+    app_name: str = "VigilOpsAgent"
     app_version: str = "1.0.0"
     debug: bool = False
     host: str = "0.0.0.0"
@@ -75,14 +75,14 @@ class Settings(BaseSettings):
     # MySQL 配置（仅用于用户鉴权 + 会话管理）
     mysql_host: str = "localhost"
     mysql_port: int = 3306
-    mysql_db: str = "on_call_agent"
+    mysql_db: str = "vigil_ops_agent"
     mysql_user: str = "root"
     mysql_password: str = ""
 
     # PostgreSQL 配置（用于冷 checkpoint fallback + Store + 对话历史持久化）
     postgres_host: str = "localhost"
     postgres_port: int = 5432
-    postgres_db: str = "on_call_agent"
+    postgres_db: str = "vigil_ops_agent"
     postgres_user: str = "postgres"
     postgres_password: str = "postgres"
 

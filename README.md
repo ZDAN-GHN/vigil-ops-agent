@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="static/img/logo-icon.svg" alt="" align="center" height="64" />
+<img src="static/img/logo-icon.svg" alt="" align="center" height="196" />
 
-# OnCallAgent
+# VigilOpsAgent
 
 > 企业级智能对话与运维助手 — RAG 知识库问答 + AIOps 智能诊断
 
@@ -18,7 +18,7 @@
 
 ## 概述
 
-OnCallAgent 是一个基于 **LangGraph** 构建的企业级智能运维助手，提供两条核心能力路径：
+VigilOpsAgent 是一个基于 **LangGraph** 构建的企业级智能运维助手，提供两条核心能力路径：
 
 - **RAG 对话**：基于 Milvus 向量检索的知识库问答，支持文档上传与自动索引，结合 MCP 工具调用实现多轮对话
 - **AIOps 诊断**：Plan-Execute-Replan 模式的自动故障诊断，通过 MCP 协议接入日志查询和监控数据工具，动态调整诊断策略并生成结构化报告
@@ -77,7 +77,7 @@ OnCallAgent 是一个基于 **LangGraph** 构建的企业级智能运维助手�
 ```bash
 # 1. 克隆项目
 git clone <repository_url>
-cd on_call_agent
+cd vigil_ops_agent
 
 # 2. 安装依赖
 uv pip install -e .
@@ -212,7 +212,7 @@ curl -X POST "http://localhost:9999/api/aiops" \
 ## 项目结构
 
 ```
-on_call_agent/
+vigil_ops_agent/
 ├── app/                                # 应用核心
 │   ├── main.py                         # FastAPI 入口（生命周期、路由、中间件）
 │   ├── config.py                       # Pydantic Settings 配置管理

@@ -3,7 +3,7 @@ chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 
 echo ====================================
-echo Start OnCallAgent Services
+echo Start VigilOpsAgent Services
 echo ====================================
 echo.
 
@@ -130,7 +130,7 @@ echo.
 
 REM Start FastAPI with hot reload
 echo [7/8] Start FastAPI service (with hot reload)...
-start "OnCallAgent API" %PYTHON_CMD% -m uvicorn app.main:app --reload --host 0.0.0.0 --port 9900
+start "VigilOpsAgent API" %PYTHON_CMD% -m uvicorn app.main:app --reload --host 0.0.0.0 --port 9900
 echo [INFO] Waiting for startup (15s)...
 timeout /t 15 /nobreak >nul
 echo.
